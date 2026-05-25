@@ -1,0 +1,5 @@
+.claude/
+Journey replay web app/
+*.log
+.DS_Store
+Thumbs.db

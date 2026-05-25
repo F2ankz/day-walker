@@ -1,0 +1,2684 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0e1418" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Day Walker" />
+<title>Day Walker — Journey Replay</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/idb@8/build/umd.js"></script>
+<style>
+  :root {
+    --bg: #0e1418;
+    --bg-2: #161d22;
+    --bg-3: #1f272d;
+    --surface: rgba(22, 29, 34, 0.78);
+    --surface-2: rgba(31, 39, 45, 0.92);
+    --line: rgba(255,255,255,0.08);
+    --line-2: rgba(255,255,255,0.14);
+    --text: #f4ede0;
+    --text-dim: #a9a193;
+    --text-mute: #6e6a62;
+    --sand: #e8d5b5;
+    --terracotta: #c87852;
+    --terracotta-2: #e09972;
+    --teal: #2d6a6a;
+    --teal-2: #4a9696;
+    --warn: #d99c5b;
+    --danger: #d96a5b;
+    --ok: #6fa86a;
+    --r-sm: 10px;
+    --r-md: 16px;
+    --r-lg: 22px;
+    --shadow-lg: 0 18px 48px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.25);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter Tight', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { overflow: hidden; }
+
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+  #map { position: absolute; inset: 0; background: var(--bg); }
+  .maplibregl-ctrl-attrib { background: rgba(0,0,0,0.4) !important; color: #ccc !important; font-size: 10px !important; }
+  .maplibregl-ctrl-attrib a { color: #ccc !important; }
+
+  /* Header */
+  .topbar {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: max(env(safe-area-inset-top), 12px) 14px 12px;
+    background: linear-gradient(to bottom, rgba(14,20,24,0.92) 0%, rgba(14,20,24,0.6) 70%, transparent 100%);
+    z-index: 30;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .logo {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+    color: var(--sand);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .logo .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--terracotta); box-shadow: 0 0 12px var(--terracotta); }
+  .logo.tracking .dot { background: var(--ok); box-shadow: 0 0 12px var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{ opacity:1; transform:scale(1);} 50%{ opacity:.55; transform:scale(1.35);} }
+
+  .iconbtn {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--line);
+    color: var(--text);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: transform .15s, background .15s;
+  }
+  .iconbtn:active { transform: scale(0.92); }
+  .iconbtn svg { width: 20px; height: 20px; }
+
+  /* Stats card */
+  .stats-card {
+    position: absolute;
+    top: max(calc(env(safe-area-inset-top) + 64px), 76px);
+    left: 14px; right: 14px;
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 14px 16px;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat .v { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; color: var(--sand); line-height: 1; }
+  .stat .l { font-size: 11px; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.6px; }
+
+  /* Bottom action stack */
+  .bottombar {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 14px 14px max(env(safe-area-inset-bottom), 14px);
+    z-index: 25;
+    pointer-events: none;
+  }
+  .bottombar > * { pointer-events: auto; }
+
+  .timeline {
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    display: flex; gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .timeline::-webkit-scrollbar { display: none; }
+  .chip {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--bg-3);
+    color: var(--text-dim);
+    border: 1px solid var(--line);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .chip.active { background: var(--terracotta); color: white; border-color: var(--terracotta); }
+
+  .main-actions {
+    display: grid;
+    grid-template-columns: 1fr 56px 56px;
+    gap: 8px;
+  }
+  .btn {
+    border: none;
+    border-radius: 999px;
+    font-family: 'Inter Tight', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 16px 18px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    transition: transform .12s, filter .12s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--terracotta) 0%, var(--terracotta-2) 100%);
+    color: white;
+    box-shadow: 0 8px 24px rgba(200, 120, 82, 0.35);
+  }
+  .btn-primary.active {
+    background: linear-gradient(135deg, var(--danger) 0%, #e88671 100%);
+    box-shadow: 0 8px 24px rgba(217, 106, 91, 0.4);
+  }
+  .btn-primary.replay {
+    background: linear-gradient(135deg, var(--teal) 0%, var(--teal-2) 100%);
+    box-shadow: 0 8px 24px rgba(74, 150, 150, 0.35);
+  }
+  .btn-square {
+    width: 56px; height: 56px;
+    padding: 0;
+    border-radius: var(--r-md);
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    color: var(--text);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .btn svg { width: 20px; height: 20px; }
+
+  /* Replay overlay */
+  #replay-overlay {
+    position: absolute; inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    display: none;
+  }
+  #replay-overlay.active { display: block; }
+  #replay-overlay > * { pointer-events: auto; }
+
+  .replay-top {
+    position: absolute;
+    top: max(env(safe-area-inset-top), 14px);
+    left: 14px; right: 14px;
+    display: flex; justify-content: space-between; gap: 10px;
+    transition: opacity .4s;
+  }
+  .replay-pill {
+    background: var(--surface);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  .replay-pill .small { font-size: 10px; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.5px; }
+  .replay-pill .big { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; color: var(--sand); }
+
+  .replay-bottom {
+    position: absolute;
+    left: 14px; right: 14px;
+    bottom: max(env(safe-area-inset-bottom), 14px);
+    background: var(--surface);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 14px;
+    transition: opacity .4s;
+  }
+  .replay-progress {
+    width: 100%;
+    height: 24px;
+    position: relative;
+    cursor: pointer;
+    margin-bottom: 12px;
+  }
+  .replay-progress .track {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    left: 0; right: 0; height: 4px;
+    background: var(--bg-3);
+    border-radius: 2px;
+  }
+  .replay-progress .fill {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    left: 0; height: 4px;
+    background: linear-gradient(90deg, var(--terracotta), var(--terracotta-2));
+    border-radius: 2px;
+    width: 0%;
+  }
+  .replay-progress .thumb {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 16px; height: 16px;
+    background: var(--sand);
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    left: 0%;
+  }
+  .replay-controls {
+    display: flex; align-items: center; gap: 8px;
+    justify-content: space-between;
+  }
+  .replay-controls .left, .replay-controls .right {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .ctrl-btn {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    color: var(--text);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .ctrl-btn:active { transform: scale(0.92); }
+  .ctrl-btn.primary {
+    width: 56px; height: 56px;
+    background: var(--terracotta);
+    border-color: var(--terracotta);
+    color: white;
+  }
+  .ctrl-btn svg { width: 22px; height: 22px; }
+  .ctrl-btn.primary svg { width: 26px; height: 26px; }
+
+  .speed-btn {
+    min-width: 48px;
+    padding: 0 12px; height: 36px;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text);
+    font-size: 13px; font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .view-modes {
+    position: absolute;
+    right: 14px;
+    top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 8px;
+    transition: opacity .4s;
+  }
+  .view-modes button {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    font-size: 18px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .view-modes button.active {
+    background: var(--terracotta);
+    border-color: var(--terracotta);
+    color: white;
+    transform: scale(1.05);
+  }
+
+  .replay-fade .replay-top,
+  .replay-fade .replay-bottom,
+  .replay-fade .view-modes { opacity: 0.15; }
+
+  /* Sheet (modal/drawer) */
+  .sheet-bg {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 100;
+    opacity: 0; pointer-events: none;
+    transition: opacity .25s;
+  }
+  .sheet-bg.active { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: var(--bg-2);
+    border-radius: 24px 24px 0 0;
+    z-index: 101;
+    transform: translateY(100%);
+    transition: transform .3s cubic-bezier(.2,.8,.2,1);
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 8px 18px max(env(safe-area-inset-bottom), 18px);
+    box-shadow: var(--shadow-lg);
+  }
+  .sheet.active { transform: translateY(0); }
+  .sheet-handle {
+    width: 38px; height: 4px;
+    background: var(--line-2);
+    border-radius: 4px;
+    margin: 8px auto 14px;
+  }
+  .sheet h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    margin: 0 0 14px;
+    font-size: 22px;
+    color: var(--sand);
+  }
+  .sheet h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 16px;
+    color: var(--text);
+    margin: 18px 0 10px;
+    font-weight: 500;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 12px; color: var(--text-dim); }
+  .field input[type=text],
+  .field input[type=number],
+  .field input[type=password],
+  .field textarea,
+  .field select {
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 15px;
+    padding: 12px 14px;
+    outline: none;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    border-color: var(--terracotta);
+  }
+  .field textarea { resize: vertical; min-height: 72px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .btn-block {
+    width: 100%;
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--bg-3);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .btn-block.primary {
+    background: var(--terracotta);
+    border-color: var(--terracotta);
+    color: white;
+  }
+  .btn-block.danger {
+    color: var(--danger);
+    border-color: rgba(217,106,91,0.3);
+  }
+
+  /* Days list */
+  .day-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px;
+    background: var(--bg-3);
+    border-radius: 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    border: 1px solid var(--line);
+  }
+  .day-item:active { transform: scale(0.99); }
+  .day-thumb {
+    width: 60px; height: 60px;
+    border-radius: 12px;
+    background: var(--bg);
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .day-thumb canvas, .day-thumb svg { width: 100%; height: 100%; display: block; }
+  .day-info { flex: 1; min-width: 0; }
+  .day-info .date { font-family: 'Fraunces', serif; font-size: 16px; color: var(--sand); font-weight: 500; }
+  .day-info .meta { font-size: 12px; color: var(--text-mute); margin-top: 2px; }
+  .day-info .meta span { margin-right: 10px; }
+
+  /* Live walker / vehicle marker (shown during replay) */
+  .walker-marker {
+    width: 30px; height: 30px;
+    pointer-events: none;
+    will-change: transform;
+  }
+  .walker-marker svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
+  .walker-marker .pulse {
+    transform-origin: center;
+    animation: walker-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes walker-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.45; }
+    50% { transform: scale(1.6); opacity: 0; }
+  }
+
+  /* Waypoint markers in map */
+  .wp-marker {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--terracotta);
+    border: 3px solid var(--sand);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4), 0 0 0 4px rgba(200,120,82,0.25);
+    display: flex; align-items: center; justify-content: center;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .wp-marker.has-photo {
+    width: 44px; height: 44px;
+    padding: 0;
+    overflow: hidden;
+  }
+  .wp-marker img {
+    width: 100%; height: 100%; object-fit: cover;
+    border-radius: 50%;
+  }
+  .wp-popup-content {
+    font-family: inherit;
+    color: var(--text);
+    background: var(--bg-2);
+    padding: 4px;
+  }
+  .wp-popup-content .n { font-weight: 600; font-size: 14px; color: var(--sand); }
+  .wp-popup-content .t { font-size: 11px; color: var(--text-mute); margin-top: 2px; }
+  .wp-popup-content img { width: 200px; max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
+
+  .maplibregl-popup-content {
+    background: var(--bg-2) !important;
+    color: var(--text) !important;
+    border-radius: 12px !important;
+    padding: 10px 12px !important;
+    box-shadow: var(--shadow-lg) !important;
+  }
+  .maplibregl-popup-tip { border-top-color: var(--bg-2) !important; border-bottom-color: var(--bg-2) !important; }
+  .maplibregl-popup-close-button { color: var(--text-dim) !important; font-size: 18px !important; padding: 2px 6px !important; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: max(env(safe-area-inset-bottom), 24px);
+    left: 50%; transform: translateX(-50%) translateY(120%);
+    background: var(--bg-2);
+    color: var(--text);
+    padding: 12px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--line-2);
+    font-size: 14px;
+    box-shadow: var(--shadow-lg);
+    z-index: 200;
+    transition: transform .35s cubic-bezier(.2,.8,.2,1);
+    max-width: 90vw;
+    text-align: center;
+  }
+  .toast.show { transform: translateX(-50%) translateY(-12px); }
+  .toast.bottombar-up.show { transform: translateX(-50%) translateY(-92px); }
+
+  /* Loading splash */
+  .splash {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 500;
+    transition: opacity .5s;
+  }
+  .splash.hide { opacity: 0; pointer-events: none; }
+  .splash-inner { text-align: center; }
+  .splash-inner .name {
+    font-family: 'Fraunces', serif;
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--sand);
+    margin-bottom: 8px;
+  }
+  .splash-inner .tag { color: var(--text-mute); font-size: 14px; letter-spacing: 1px; text-transform: uppercase; }
+  .draw-line {
+    width: 120px; height: 60px;
+    margin: 24px auto 0;
+  }
+  .draw-line svg { width: 100%; height: 100%; }
+  .draw-line path {
+    fill: none;
+    stroke: var(--terracotta);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 200;
+    stroke-dashoffset: 200;
+    animation: draw 1.8s ease-in-out infinite;
+  }
+  @keyframes draw {
+    0% { stroke-dashoffset: 200; }
+    50% { stroke-dashoffset: 0; }
+    100% { stroke-dashoffset: -200; }
+  }
+
+  /* Photo preview in waypoint sheet */
+  .photo-preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border-radius: 14px;
+    background: var(--bg-3);
+    border: 1px dashed var(--line-2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-mute);
+    overflow: hidden;
+    margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .photo-preview img { width: 100%; height: 100%; object-fit: cover; }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-mute);
+  }
+  .empty-state .ico { font-size: 36px; margin-bottom: 12px; }
+
+  /* Capture btn position */
+  .capture-fab {
+    position: absolute;
+    left: 14px;
+    bottom: 100px;
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    z-index: 51;
+    transition: opacity .4s;
+  }
+  .replay-fade .capture-fab { opacity: 0.15; }
+
+  @media (min-width: 700px) {
+    .stats-card { left: 14px; right: auto; width: 320px; }
+    .bottombar { left: auto; right: 0; max-width: 420px; }
+    .replay-bottom { left: 50%; transform: translateX(-50%); max-width: 520px; }
+    .replay-top { left: 50%; transform: translateX(-50%); max-width: 520px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="map"></div>
+
+  <div class="topbar">
+    <div class="logo" id="logo"><span class="dot"></span><span>Day Walker</span></div>
+    <div style="display:flex; gap:8px;">
+      <button class="iconbtn" id="btn-basemap" title="Toggle satellite">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2a10 10 0 0 1 10 10M2 12a10 10 0 0 0 10 10M22 12a10 10 0 0 1-10 10M12 2a10 10 0 0 0-10 10"/></svg>
+      </button>
+      <button class="iconbtn" id="btn-days" title="Days">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      </button>
+      <button class="iconbtn" id="btn-settings" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="stats-card" id="stats-card">
+    <div class="stat"><div class="v" id="stat-distance">0.0</div><div class="l">km today</div></div>
+    <div class="stat"><div class="v" id="stat-waypoints">0</div><div class="l">places</div></div>
+    <div class="stat"><div class="v" id="stat-duration">0m</div><div class="l">time</div></div>
+  </div>
+
+  <div class="bottombar" id="bottombar">
+    <div class="timeline" id="timeline" style="display:none;"></div>
+    <div class="main-actions">
+      <button class="btn btn-primary" id="btn-track">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+        <span id="btn-track-label">Start Day</span>
+      </button>
+      <button class="btn btn-square" id="btn-waypoint" title="Mark waypoint">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      </button>
+      <button class="btn btn-square btn-primary replay" id="btn-replay" title="Replay today's journey">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="replay-overlay">
+    <div class="replay-top">
+      <div class="replay-pill">
+        <div class="small">Trip time</div>
+        <div class="big" id="rp-time">--:--</div>
+      </div>
+      <div class="replay-pill" style="text-align:right;">
+        <div class="small">Distance</div>
+        <div class="big"><span id="rp-dist">0.0</span> <span style="font-size:12px; color:var(--text-mute);">/ <span id="rp-dist-total">0.0</span> km</span></div>
+      </div>
+    </div>
+
+    <div class="view-modes" id="view-modes">
+      <button data-mode="walker" class="active" title="Walker (first-person)">🚶</button>
+      <button data-mode="follow" title="Lock follow — keeps your angle">🎯</button>
+      <button data-mode="drone" title="Drone view">🚁</button>
+      <button data-mode="top" title="Top-down">🗺️</button>
+      <button data-mode="free" title="Free camera">🎥</button>
+    </div>
+
+    <button class="capture-fab" id="btn-capture" title="Capture moment">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </button>
+
+    <div class="replay-bottom">
+      <div class="replay-progress" id="rp-progress">
+        <div class="track"></div>
+        <div class="fill" id="rp-fill"></div>
+        <div class="thumb" id="rp-thumb"></div>
+      </div>
+      <div class="replay-controls">
+        <div class="left">
+          <button class="ctrl-btn" id="rp-close" title="Close replay">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+          <button class="ctrl-btn" id="rp-reset" title="Reset">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+          </button>
+        </div>
+        <button class="ctrl-btn primary" id="rp-playpause">
+          <svg id="rp-play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="rp-pause-icon" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>
+        </button>
+        <div class="right">
+          <button class="speed-btn" id="rp-speed">50x</button>
+          <button class="ctrl-btn" id="rp-loop" title="Loop">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings sheet -->
+<div class="sheet-bg" id="sheet-bg"></div>
+<div class="sheet" id="sheet-settings">
+  <div class="sheet-handle"></div>
+  <h2>Settings</h2>
+  <h3>Units</h3>
+  <div class="field">
+    <select id="set-units">
+      <option value="km">Kilometers</option>
+      <option value="mi">Miles</option>
+    </select>
+  </div>
+  <h3>GPS Tracking</h3>
+  <div class="row">
+    <div class="field">
+      <label>Interval (s)</label>
+      <input type="number" id="set-interval" min="1" max="60" step="1" />
+    </div>
+    <div class="field">
+      <label>Min move (m)</label>
+      <input type="number" id="set-mindist" min="0" max="100" step="1" />
+    </div>
+  </div>
+  <div class="field">
+    <label>Max accuracy threshold (m) — points with worse accuracy are discarded</label>
+    <input type="number" id="set-acc" min="5" max="200" step="5" />
+  </div>
+  <h3>Replay</h3>
+  <div class="row">
+    <div class="field">
+      <label>Default speed</label>
+      <select id="set-speed">
+        <option value="10">10x</option>
+        <option value="50">50x</option>
+        <option value="200">200x</option>
+        <option value="500">500x</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Default view</label>
+      <select id="set-view">
+        <option value="walker">Walker 🚶</option>
+        <option value="drone">Drone 🚁</option>
+        <option value="top">Top-down 🗺️</option>
+      </select>
+    </div>
+  </div>
+  <h3>Optional</h3>
+  <div class="field">
+    <label>GitHub token (for share-via-Gist) — stored locally only</label>
+    <input type="password" id="set-token" placeholder="ghp_..." autocomplete="off" />
+  </div>
+  <button class="btn-block primary" id="set-save">Save</button>
+  <h3>Plan a journey</h3>
+  <button class="btn-block" id="set-plan">🛣️ Set start &amp; end points</button>
+  <h3>Demo</h3>
+  <button class="btn-block" id="set-demo">🧪 Run sample journey (2km walk)</button>
+  <button class="btn-block danger" id="set-clear">Clear all data</button>
+  <div style="height: 24px;"></div>
+</div>
+
+<!-- Waypoint sheet -->
+<div class="sheet" id="sheet-waypoint">
+  <div class="sheet-handle"></div>
+  <h2>Mark this place</h2>
+  <div class="photo-preview" id="wp-photo-preview">
+    <div>📷 Tap to add photo</div>
+  </div>
+  <input type="file" id="wp-photo-input" accept="image/*" capture="environment" style="display:none;" />
+  <div class="field">
+    <label>Name</label>
+    <input type="text" id="wp-name" placeholder="ร้านกาแฟ" />
+  </div>
+  <div class="field">
+    <label>Note (optional)</label>
+    <textarea id="wp-note" placeholder="สั่งลาเต้ อร่อยมาก"></textarea>
+  </div>
+  <button class="btn-block primary" id="wp-save">Save waypoint</button>
+  <button class="btn-block" id="wp-cancel">Cancel</button>
+  <div style="height: 24px;"></div>
+</div>
+
+<!-- Days sheet -->
+<div class="sheet" id="sheet-days">
+  <div class="sheet-handle"></div>
+  <h2>Your journeys</h2>
+  <div id="days-list"></div>
+  <div style="height: 24px;"></div>
+</div>
+
+<!-- Day detail sheet -->
+<div class="sheet" id="sheet-day-detail">
+  <div class="sheet-handle"></div>
+  <h2 id="dd-title">Day</h2>
+  <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-bottom: 16px;">
+    <div class="stat"><div class="v" id="dd-distance">—</div><div class="l">km</div></div>
+    <div class="stat"><div class="v" id="dd-waypoints">—</div><div class="l">places</div></div>
+    <div class="stat"><div class="v" id="dd-duration">—</div><div class="l">time</div></div>
+  </div>
+  <button class="btn-block primary" id="dd-replay">▶️ Replay this journey</button>
+  <button class="btn-block" id="dd-load">Show on map</button>
+  <h3>Export</h3>
+  <div class="row">
+    <button class="btn-block" id="dd-json">Copy JSON</button>
+    <button class="btn-block" id="dd-gpx">Download GPX</button>
+  </div>
+  <button class="btn-block" id="dd-share">Share</button>
+  <button class="btn-block" id="dd-gist" style="display:none;">Share via Gist link</button>
+  <button class="btn-block danger" id="dd-delete">Delete this day</button>
+  <div style="height: 24px;"></div>
+</div>
+
+<!-- Plan journey sheet -->
+<div class="sheet" id="sheet-plan">
+  <div class="sheet-handle"></div>
+  <h2>Plan a journey</h2>
+
+  <h3>Start point</h3>
+  <div class="row">
+    <div class="field"><label>Latitude</label><input type="number" id="plan-from-lat" step="0.000001" inputmode="decimal" placeholder="13.650552" /></div>
+    <div class="field"><label>Longitude</label><input type="number" id="plan-from-lng" step="0.000001" inputmode="decimal" placeholder="100.443979" /></div>
+  </div>
+  <div class="row" style="margin-bottom:6px;">
+    <button class="btn-block" id="plan-pick-from" style="margin:0;">📍 Pick on map</button>
+    <button class="btn-block" id="plan-here-from" style="margin:0;">🛰️ Use my GPS</button>
+  </div>
+
+  <h3>End point</h3>
+  <div class="row">
+    <div class="field"><label>Latitude</label><input type="number" id="plan-to-lat" step="0.000001" inputmode="decimal" placeholder="13.669074" /></div>
+    <div class="field"><label>Longitude</label><input type="number" id="plan-to-lng" step="0.000001" inputmode="decimal" placeholder="100.448460" /></div>
+  </div>
+  <button class="btn-block" id="plan-pick-to" style="margin-bottom:6px;">📍 Pick on map</button>
+
+  <h3>Options</h3>
+  <div class="row">
+    <div class="field">
+      <label>Mode</label>
+      <select id="plan-mode">
+        <option value="foot">🚶 Walking</option>
+        <option value="driving">🚗 Driving</option>
+        <option value="bike">🚴 Cycling</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Avg speed (km/h)</label>
+      <input type="number" id="plan-speed" step="0.5" min="1" max="120" value="5" />
+    </div>
+  </div>
+
+  <button class="btn-block primary" id="plan-generate">🚀 Generate journey</button>
+  <button class="btn-block" id="plan-cancel">Cancel</button>
+  <div style="height: 24px;"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="splash" id="splash">
+  <div class="splash-inner">
+    <div class="name">Day Walker</div>
+    <div class="tag">retrace your steps</div>
+    <div class="draw-line">
+      <svg viewBox="0 0 120 60">
+        <path d="M 5 50 Q 30 5, 60 30 T 115 15" />
+      </svg>
+    </div>
+  </div>
+</div>
+
+<script>
+// =============================================================
+// Day Walker — Single-file PWA for journey tracking & 3D replay
+// =============================================================
+
+const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
+
+// ---------- State ----------
+const state = {
+  map: null,
+  mapReady: false,
+  tracking: false,
+  watchId: null,
+  currentDay: null,           // active day in IndexedDB
+  loadedDay: null,            // displayed day (today by default)
+  lastPoint: null,
+  smoothBuf: [],
+  settings: {
+    units: 'km',
+    trackInterval: 3000,
+    minDistance: 5,
+    accuracyMax: 50,
+    defaultSpeed: 50,
+    defaultView: 'walker',
+    githubToken: ''
+  },
+  replay: {
+    active: false,
+    playing: false,
+    speed: 50,
+    viewMode: 'walker',
+    pointIdx: 0,
+    progress: 0,        // 0..1
+    rafId: null,
+    lastFrame: 0,
+    tripTime: 0,        // ms into trip
+    totalTime: 0,       // ms duration of trip
+    loop: false,
+    fadeTimer: null,
+    waypointMarkers: []
+  },
+  liveMarkers: [],
+};
+
+let db;
+let usingFallback = false;
+const DB_NAME = 'day-walker';
+const DB_VERSION = 1;
+
+// ---------- IndexedDB (with in-memory + localStorage fallback) ----------
+// Some contexts block IndexedDB: file://, sandboxed iframes (Claude preview),
+// private mode. In those cases we keep a Map() in memory and mirror to
+// localStorage when available so data at least survives a reload.
+function makeFallbackDB() {
+  usingFallback = true;
+  const stores = { days: new Map(), settings: new Map() };
+  const LS_KEY = 'day-walker-fallback';
+  let hasLS = false;
+  try {
+    localStorage.setItem('__dw_test', '1'); localStorage.removeItem('__dw_test');
+    hasLS = true;
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      for (const r of (data.days || [])) stores.days.set(r.id, r);
+      for (const r of (data.settings || [])) stores.settings.set(r.key, r);
+    }
+  } catch (e) { hasLS = false; }
+
+  let persistTimer;
+  function persist() {
+    if (!hasLS) return;
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          days: [...stores.days.values()],
+          settings: [...stores.settings.values()]
+        }));
+      } catch (e) { /* quota — drop */ }
+    }, 300);
+  }
+  return {
+    async get(store, key) { return stores[store].get(key); },
+    async getAll(store) { return [...stores[store].values()]; },
+    async put(store, value) {
+      const key = store === 'settings' ? value.key : value.id;
+      stores[store].set(key, value);
+      persist();
+    },
+    async delete(store, key) { stores[store].delete(key); persist(); },
+    async clear(store) { stores[store].clear(); persist(); }
+  };
+}
+
+async function openDB() {
+  try {
+    if (typeof indexedDB === 'undefined') throw new Error('IndexedDB unavailable');
+    db = await idb.openDB(DB_NAME, DB_VERSION, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains('days')) {
+          const s = db.createObjectStore('days', { keyPath: 'id' });
+          s.createIndex('date', 'date');
+          s.createIndex('status', 'status');
+        }
+        if (!db.objectStoreNames.contains('settings')) {
+          db.createObjectStore('settings', { keyPath: 'key' });
+        }
+      }
+    });
+  } catch (e) {
+    console.warn('IndexedDB unavailable, using fallback storage:', e.message);
+    db = makeFallbackDB();
+    setTimeout(() => {
+      toast('Preview mode: data won\'t persist. Serve over http(s) for full storage.', { duration: 5500 });
+    }, 1500);
+  }
+}
+
+async function loadSettings() {
+  if (!db) return;
+  const all = await db.getAll('settings');
+  for (const s of all) {
+    if (s.key in state.settings) state.settings[s.key] = s.value;
+  }
+}
+async function saveSetting(key, value) {
+  state.settings[key] = value;
+  await db.put('settings', { key, value });
+}
+
+// ---------- Helpers ----------
+function todayId() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return { id: `day_${yyyy}-${mm}-${dd}`, date: `${yyyy}-${mm}-${dd}` };
+}
+
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = v => v * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function calcBearing(lat1, lng1, lat2, lng2) {
+  const toRad = v => v * Math.PI / 180;
+  const dLng = toRad(lng2 - lng1);
+  const y = Math.sin(dLng) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(dLng);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function formatDistance(m) {
+  if (state.settings.units === 'mi') {
+    const mi = m / 1609.344;
+    return mi.toFixed(mi < 10 ? 2 : 1);
+  }
+  const km = m / 1000;
+  return km.toFixed(km < 10 ? 2 : 1);
+}
+function unitLabel() { return state.settings.units === 'mi' ? 'mi' : 'km'; }
+
+function formatDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+function formatClock(ts) {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+let toastTimer;
+function toast(msg, opts={}) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.toggle('bottombar-up', !!opts.up);
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), opts.duration || 2400);
+}
+
+// ---------- Map ----------
+const STREET_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const SAT_STYLE = {
+  version: 8,
+  glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+  sources: {
+    sat: {
+      type: 'raster',
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+      ],
+      tileSize: 256, maxzoom: 19,
+      attribution: 'Imagery © Esri'
+    },
+    openmaptiles: {
+      type: 'vector',
+      url: 'https://tiles.openfreemap.org/planet'
+    }
+  },
+  layers: [
+    { id: 'bg', type: 'background', paint: { 'background-color': '#0e1418' } },
+    { id: 'sat', type: 'raster', source: 'sat', paint: { 'raster-saturation': -0.1, 'raster-contrast': 0.06 } }
+  ]
+};
+
+function addCustomLayers() {
+  const m = state.map;
+  // 3D buildings — needs openmaptiles vector source (present in both styles)
+  try {
+    const layers = m.getStyle().layers;
+    let labelLayerId;
+    for (const l of layers) {
+      if (l.type === 'symbol' && l.layout && l.layout['text-field']) { labelLayerId = l.id; break; }
+    }
+    if (m.getSource('openmaptiles') && !m.getLayer('3d-buildings')) {
+      m.addLayer({
+        id: '3d-buildings',
+        source: 'openmaptiles',
+        'source-layer': 'building',
+        type: 'fill-extrusion',
+        minzoom: 14,
+        paint: {
+          'fill-extrusion-color': state.basemap === 'satellite'
+            ? ['interpolate', ['linear'], ['get', 'render_height'],
+                0, '#646d76', 30, '#7a838c', 100, '#a0a8b0', 300, '#cdd2d6']
+            : ['interpolate', ['linear'], ['get', 'render_height'],
+                0, '#2a3138', 30, '#3a434b', 100, '#525d66', 300, '#7a8590'],
+          'fill-extrusion-height': ['get', 'render_height'],
+          'fill-extrusion-base': ['get', 'render_min_height'],
+          'fill-extrusion-opacity': state.basemap === 'satellite' ? 0.78 : 0.92
+        }
+      }, labelLayerId);
+    }
+  } catch (e) { console.warn('3D buildings layer skipped', e); }
+
+  if (!m.getSource('trail')) m.addSource('trail', { type: 'geojson', data: emptyGeoJSON() });
+  if (!m.getLayer('trail-glow')) {
+    m.addLayer({
+      id: 'trail-glow', source: 'trail', type: 'line',
+      paint: { 'line-color': '#e09972', 'line-width': 12, 'line-opacity': 0.22, 'line-blur': 6 },
+      layout: { 'line-cap': 'round', 'line-join': 'round' }
+    });
+  }
+  if (!m.getLayer('trail-main')) {
+    m.addLayer({
+      id: 'trail-main', source: 'trail', type: 'line',
+      paint: { 'line-color': '#e09972', 'line-width': 4, 'line-opacity': 0.95 },
+      layout: { 'line-cap': 'round', 'line-join': 'round' }
+    });
+  }
+  if (!m.getSource('trail-ahead')) m.addSource('trail-ahead', { type: 'geojson', data: emptyGeoJSON() });
+  if (!m.getLayer('trail-ahead-line')) {
+    m.addLayer({
+      id: 'trail-ahead-line', source: 'trail-ahead', type: 'line',
+      paint: { 'line-color': '#6fb3c4', 'line-width': 2, 'line-opacity': 0.6, 'line-dasharray': [2, 2] },
+      layout: { 'line-cap': 'round', 'line-join': 'round' }
+    });
+  }
+  // Push current day data back into the new style's sources
+  if (state.loadedDay) {
+    setTrail(state.loadedDay.points);
+    clearWaypointMarkers();
+    for (const wp of state.loadedDay.waypoints) addWaypointMarker(wp);
+  }
+}
+
+function initMap(center = [100.5018, 13.7563]) {
+  state.basemap = 'street';
+  state.map = new maplibregl.Map({
+    container: 'map',
+    style: STREET_STYLE_URL,
+    center, zoom: 14, pitch: 45, bearing: 0,
+    antialias: true, maxPitch: 85,
+    attributionControl: { compact: true }
+  });
+
+  state.map.on('load', async () => {
+    state.mapReady = true;
+    addCustomLayers();
+    bindUserGestureAutoFree();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => state.map.jumpTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 16 }),
+        () => {},
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
+    }
+    await loadOrCreateToday();
+  });
+}
+
+function switchBasemap(name) {
+  if (!state.mapReady || state.basemap === name) return;
+  state.basemap = name;
+  const cam = {
+    center: state.map.getCenter(), zoom: state.map.getZoom(),
+    pitch: state.map.getPitch(), bearing: state.map.getBearing()
+  };
+  state.map.setStyle(name === 'satellite' ? SAT_STYLE : STREET_STYLE_URL);
+  // Re-add as soon as new style's sources are ready; idle alone can be delayed by tile loads
+  state.map.once('styledata', () => {
+    try { addCustomLayers(); } catch (e) { console.warn('layer re-add failed', e); }
+    state.map.jumpTo(cam);
+  });
+}
+
+function emptyGeoJSON() {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+function pointsToLineGeoJSON(points) {
+  if (!points || points.length < 2) return emptyGeoJSON();
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: points.map(p => [p.lng, p.lat]) },
+      properties: {}
+    }]
+  };
+}
+
+function setTrail(points) {
+  if (!state.mapReady) return;
+  const src = state.map.getSource('trail');
+  if (src) src.setData(pointsToLineGeoJSON(points));
+}
+function setTrailAhead(points) {
+  if (!state.mapReady) return;
+  const src = state.map.getSource('trail-ahead');
+  if (src) src.setData(pointsToLineGeoJSON(points));
+}
+
+function clearWaypointMarkers(target = state.liveMarkers) {
+  for (const m of target) m.remove();
+  target.length = 0;
+}
+
+function addWaypointMarker(wp, list = state.liveMarkers) {
+  const el = document.createElement('div');
+  el.className = 'wp-marker' + (wp.photoBase64 ? ' has-photo' : '');
+  if (wp.photoBase64) {
+    const img = document.createElement('img');
+    img.src = wp.photoBase64;
+    el.appendChild(img);
+  } else {
+    el.textContent = '📍';
+  }
+  const popup = new maplibregl.Popup({ offset: 24, closeButton: true, maxWidth: '260px' })
+    .setHTML(`
+      <div class="wp-popup-content">
+        <div class="n">${escapeHtml(wp.name || 'Untitled')}</div>
+        <div class="t">${formatClock(wp.ts)}${wp.note ? ' · ' + escapeHtml(wp.note) : ''}</div>
+        ${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="" />` : ''}
+      </div>
+    `);
+  const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+    .setLngLat([wp.lng, wp.lat])
+    .setPopup(popup)
+    .addTo(state.map);
+  list.push(marker);
+  return marker;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------- Day management ----------
+async function loadOrCreateToday() {
+  const { id, date } = todayId();
+  let day = await db.get('days', id);
+  if (!day) {
+    day = {
+      id, date,
+      startedAt: null,
+      endedAt: null,
+      status: 'idle',
+      points: [],
+      waypoints: [],
+      stats: { distanceM: 0, durationS: 0, avgSpeedMps: 0, maxSpeedMps: 0, waypointCount: 0 }
+    };
+    await db.put('days', day);
+  }
+  state.currentDay = day;
+  state.loadedDay = day;
+  refreshUI();
+  refreshMapForDay(day);
+}
+
+async function persistDay() {
+  if (!state.currentDay) return;
+  await db.put('days', state.currentDay);
+}
+
+function recalcStats(day) {
+  let dist = 0, maxSpd = 0;
+  for (let i = 1; i < day.points.length; i++) {
+    const a = day.points[i-1], b = day.points[i];
+    dist += haversine(a.lat, a.lng, b.lat, b.lng);
+    if (b.spd && b.spd > maxSpd) maxSpd = b.spd;
+  }
+  const dur = (day.endedAt || day.points.at(-1)?.ts || Date.now()) - (day.startedAt || day.points[0]?.ts || Date.now());
+  day.stats = {
+    distanceM: dist,
+    durationS: Math.max(0, Math.floor(dur/1000)),
+    avgSpeedMps: dur > 0 ? dist / (dur/1000) : 0,
+    maxSpeedMps: maxSpd,
+    waypointCount: day.waypoints.length
+  };
+}
+
+function refreshUI() {
+  const day = state.loadedDay;
+  if (!day) return;
+  recalcStats(day);
+  $('#stat-distance').textContent = formatDistance(day.stats.distanceM);
+  $('#stat-distance').nextElementSibling.textContent = `${unitLabel()} ${state.loadedDay.id === todayId().id ? 'today' : ''}`;
+  $('#stat-waypoints').textContent = day.waypoints.length;
+  $('#stat-duration').textContent = formatDuration(day.stats.durationS * 1000);
+
+  const isActive = state.tracking;
+  const tBtn = $('#btn-track');
+  tBtn.classList.toggle('active', isActive);
+  $('#btn-track-label').textContent = isActive ? 'End Day' : (day.points.length > 0 && day.id === todayId().id ? 'Resume Day' : 'Start Day');
+  $('#logo').classList.toggle('tracking', isActive);
+
+  // Hide replay button if no points
+  $('#btn-replay').disabled = day.points.length < 2;
+  $('#btn-replay').style.opacity = day.points.length < 2 ? 0.4 : 1;
+}
+
+function refreshMapForDay(day) {
+  if (!state.mapReady) return;
+  setTrail(day.points);
+  clearWaypointMarkers();
+  for (const wp of day.waypoints) addWaypointMarker(wp);
+  if (day.points.length > 0) {
+    const last = day.points.at(-1);
+    state.map.flyTo({ center: [last.lng, last.lat], zoom: 16, pitch: 45, bearing: 0, duration: 800 });
+  }
+}
+
+// ---------- GPS Tracking ----------
+function startTracking() {
+  if (!('geolocation' in navigator)) {
+    toast('Geolocation not available');
+    return;
+  }
+  // ensure currentDay is today (if user opens app next morning while replaying historic, switch back)
+  const { id, date } = todayId();
+  if (!state.currentDay || state.currentDay.id !== id) {
+    loadOrCreateToday().then(() => startTracking());
+    return;
+  }
+  if (!state.currentDay.startedAt) state.currentDay.startedAt = Date.now();
+  state.currentDay.status = 'active';
+  state.tracking = true;
+  state.smoothBuf = [];
+  state.lastPoint = state.currentDay.points.at(-1) || null;
+
+  state.watchId = navigator.geolocation.watchPosition(
+    handlePosition,
+    err => {
+      console.warn('GPS error', err);
+      toast('GPS error: ' + (err.message || err.code));
+    },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+  );
+  refreshUI();
+  toast('Tracking started — keep this tab in foreground for best GPS', { up: true });
+  persistDay();
+}
+
+async function stopTracking() {
+  if (state.watchId !== null) navigator.geolocation.clearWatch(state.watchId);
+  state.watchId = null;
+  state.tracking = false;
+  if (state.currentDay) {
+    state.currentDay.status = 'completed';
+    state.currentDay.endedAt = Date.now();
+    recalcStats(state.currentDay);
+    await persistDay();
+  }
+  refreshUI();
+  toast('Day saved', { up: true });
+}
+
+function handlePosition(pos) {
+  if (!state.currentDay) return;
+  const c = pos.coords;
+  if (c.accuracy > state.settings.accuracyMax) return; // discard noisy
+  const now = pos.timestamp || Date.now();
+
+  const newPt = { lat: c.latitude, lng: c.longitude, alt: c.altitude || null, acc: c.accuracy, spd: c.speed || 0, ts: now };
+
+  // Speed jump filter
+  if (state.lastPoint) {
+    const dt = (now - state.lastPoint.ts) / 1000;
+    if (dt > 0) {
+      const d = haversine(state.lastPoint.lat, state.lastPoint.lng, newPt.lat, newPt.lng);
+      const v = d / dt;
+      if (v > 55) return; // > 198 km/h jump = GPS glitch
+      if (d < state.settings.minDistance && dt < state.settings.trackInterval / 1000) return; // skip too-near
+    }
+  }
+
+  // Moving average smoothing
+  state.smoothBuf.push(newPt);
+  if (state.smoothBuf.length > 3) state.smoothBuf.shift();
+  let sLat = 0, sLng = 0;
+  for (const p of state.smoothBuf) { sLat += p.lat; sLng += p.lng; }
+  const smoothed = { ...newPt, lat: sLat / state.smoothBuf.length, lng: sLng / state.smoothBuf.length };
+
+  state.currentDay.points.push(smoothed);
+  state.lastPoint = smoothed;
+  setTrail(state.currentDay.points);
+  // Pan map to follow (only if user hasn't manually panned recently)
+  if (!state.replay.active && !state._userPanning) {
+    state.map.easeTo({ center: [smoothed.lng, smoothed.lat], duration: 500 });
+  }
+  recalcStats(state.currentDay);
+  refreshUI();
+  // Throttle persist
+  clearTimeout(state._saveTimer);
+  state._saveTimer = setTimeout(() => persistDay(), 1500);
+}
+
+// ---------- Waypoints ----------
+let pendingPhotoBase64 = null;
+function openWaypointSheet() {
+  if (!state.lastPoint && state.currentDay?.points.length === 0) {
+    // try to get current position
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          state.lastPoint = {
+            lat: pos.coords.latitude, lng: pos.coords.longitude,
+            ts: Date.now(), acc: pos.coords.accuracy
+          };
+          _openWP();
+        },
+        () => toast('Need GPS to mark waypoint'),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+      return;
+    }
+  }
+  _openWP();
+}
+function _openWP() {
+  pendingPhotoBase64 = null;
+  $('#wp-name').value = '';
+  $('#wp-note').value = '';
+  $('#wp-photo-preview').innerHTML = '<div>📷 Tap to add photo</div>';
+  openSheet('sheet-waypoint');
+}
+
+async function saveWaypoint() {
+  const name = $('#wp-name').value.trim() || 'Untitled';
+  const note = $('#wp-note').value.trim();
+  let pt = state.lastPoint || state.currentDay?.points.at(-1);
+  if (!pt) {
+    toast('No location yet');
+    return;
+  }
+  const wp = {
+    id: 'wp_' + Date.now(),
+    lat: pt.lat, lng: pt.lng,
+    name, note,
+    photoBase64: pendingPhotoBase64 || null,
+    ts: Date.now()
+  };
+  if (!state.currentDay) await loadOrCreateToday();
+  state.currentDay.waypoints.push(wp);
+  await persistDay();
+  addWaypointMarker(wp);
+  refreshUI();
+  closeSheet();
+  toast(`Saved: ${name}`);
+}
+
+async function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1280;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round(height * MAX / width); width = MAX; }
+          else { width = Math.round(width * MAX / height); height = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+$('#wp-photo-preview').addEventListener('click', () => $('#wp-photo-input').click());
+$('#wp-photo-input').addEventListener('change', async e => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  try {
+    pendingPhotoBase64 = await compressImage(f);
+    $('#wp-photo-preview').innerHTML = `<img src="${pendingPhotoBase64}" alt="" />`;
+  } catch (err) {
+    toast('Photo failed');
+  }
+});
+
+// ---------- Sheets ----------
+let activeSheet = null;
+function openSheet(id) {
+  if (activeSheet) closeSheet();
+  const el = document.getElementById(id);
+  if (!el) return;
+  $('#sheet-bg').classList.add('active');
+  el.classList.add('active');
+  activeSheet = el;
+}
+function closeSheet() {
+  if (!activeSheet) { $('#sheet-bg').classList.remove('active'); return; }
+  activeSheet.classList.remove('active');
+  $('#sheet-bg').classList.remove('active');
+  activeSheet = null;
+}
+$('#sheet-bg').addEventListener('click', closeSheet);
+
+// ---------- Replay ----------
+function getCameraConfig(mode, lat, lng, bearing) {
+  switch (mode) {
+    case 'walker':
+      // Used as fallback only — real walker uses setFreeCameraOptions
+      return { center: [lng, lat], zoom: 20, pitch: 85, bearing };
+    case 'drone': {
+      const back = offsetLatLng(lat, lng, (bearing + 180) % 360, 80);
+      return { center: [back.lng, back.lat], zoom: 17.2, pitch: 60, bearing };
+    }
+    case 'top':
+      return { center: [lng, lat], zoom: 16, pitch: 0, bearing: 0 };
+    case 'free':
+      return { center: [lng, lat] };
+  }
+}
+
+// Walker/vehicle marker — visible in non-first-person modes
+function ensureWalkerMarker() {
+  if (state.replay.walkerMarker) return state.replay.walkerMarker;
+  const el = document.createElement('div');
+  el.className = 'walker-marker';
+  el.innerHTML = `
+    <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+      <circle class="pulse" cx="16" cy="16" r="13" fill="#e09972"/>
+      <circle cx="16" cy="16" r="9" fill="#1a242a" stroke="#e8d5b5" stroke-width="2"/>
+      <path d="M16 6 L22 18 L16 14 L10 18 Z" fill="#e8d5b5" stroke="#1a242a" stroke-width="1" stroke-linejoin="round"/>
+    </svg>`;
+  const marker = new maplibregl.Marker({ element: el, anchor: 'center', rotationAlignment: 'map' })
+    .setLngLat([0, 0])
+    .addTo(state.map);
+  state.replay.walkerMarker = marker;
+  return marker;
+}
+function updateWalkerMarker(lat, lng, bearing) {
+  if (!state.replay.active) return;
+  const showIt = state.replay.viewMode !== 'walker';
+  if (!showIt) {
+    if (state.replay.walkerMarker) state.replay.walkerMarker.getElement().style.display = 'none';
+    return;
+  }
+  const m = ensureWalkerMarker();
+  m.setLngLat([lng, lat]);
+  m.setRotation(bearing);
+  m.getElement().style.display = '';
+}
+function removeWalkerMarker() {
+  if (state.replay.walkerMarker) {
+    state.replay.walkerMarker.remove();
+    state.replay.walkerMarker = null;
+  }
+}
+
+// True first-person camera: 1.7m above ground, sitting 3m behind the walker
+// looking ~30m ahead. Pulling the camera back stabilises perspective so
+// nearby buildings don't whip past the edges of the screen.
+function applyWalkerCamera(lat, lng, bearing) {
+  const m = state.map;
+  try {
+    const MC = maplibregl.MercatorCoordinate;
+    if (!MC || typeof m.setFreeCameraOptions !== 'function' || typeof maplibregl.FreeCameraOptions !== 'function') {
+      throw new Error('free camera unsupported');
+    }
+    const eyeHeightM = 1.7;
+    const back = offsetLatLng(lat, lng, (bearing + 180) % 360, 3);
+    const ahead = offsetLatLng(lat, lng, bearing, 30);
+    const camPos = MC.fromLngLat([back.lng, back.lat], eyeHeightM);
+
+    const opts = new maplibregl.FreeCameraOptions();
+    opts.position = camPos;
+    opts.lookAtPoint([ahead.lng, ahead.lat]);
+    m.setFreeCameraOptions(opts);
+    return true;
+  } catch (e) {
+    m.jumpTo({ center: [lng, lat], zoom: 20, pitch: 85, bearing });
+    return false;
+  }
+}
+
+function offsetLatLng(lat, lng, bearing, meters) {
+  const R = 6371000;
+  const br = bearing * Math.PI / 180;
+  const lat1 = lat * Math.PI / 180;
+  const lng1 = lng * Math.PI / 180;
+  const lat2 = Math.asin(Math.sin(lat1)*Math.cos(meters/R) + Math.cos(lat1)*Math.sin(meters/R)*Math.cos(br));
+  const lng2 = lng1 + Math.atan2(Math.sin(br)*Math.sin(meters/R)*Math.cos(lat1), Math.cos(meters/R)-Math.sin(lat1)*Math.sin(lat2));
+  return { lat: lat2 * 180 / Math.PI, lng: lng2 * 180 / Math.PI };
+}
+
+function startReplay(day) {
+  if (!day || day.points.length < 2) {
+    toast('Need at least 2 GPS points to replay');
+    return;
+  }
+  state.replay.active = true;
+  state.replay.playing = true;
+  state.replay.pointIdx = 0;
+  state.replay.progress = 0;
+  state.replay.tripTime = 0;
+  state.replay.smoothLat = null;
+  state.replay.smoothLng = null;
+  state.replay.smoothBearing = null;
+  state.replay.speed = state.settings.defaultSpeed;
+  state.replay.viewMode = state.settings.defaultView;
+  state.replay.totalTime = day.points.at(-1).ts - day.points[0].ts;
+  state.replay.lastFrame = performance.now();
+
+  $('#replay-overlay').classList.add('active');
+  $('#rp-speed').textContent = state.replay.speed + 'x';
+  $('#rp-dist-total').textContent = formatDistance(day.stats.distanceM);
+  $$('#view-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === state.replay.viewMode));
+
+  // Stash a "replay clone" of waypoints — keep existing ones
+  // Trail full path
+  setTrail([]);
+  setTrailAhead(day.points);
+
+  setPlayPauseUI(true);
+  startFadeTimer();
+  rafLoop(day);
+}
+
+function stopReplay() {
+  state.replay.active = false;
+  state.replay.playing = false;
+  if (state.replay.rafId) cancelAnimationFrame(state.replay.rafId);
+  state.replay.rafId = null;
+  $('#replay-overlay').classList.remove('active');
+  $('#replay-overlay').classList.remove('replay-fade');
+  if (state.replay.fadeTimer) clearTimeout(state.replay.fadeTimer);
+  removeWalkerMarker();
+  // Restore full trail
+  if (state.loadedDay) {
+    setTrail(state.loadedDay.points);
+    setTrailAhead([]);
+    state.map.easeTo({ pitch: 45, bearing: 0, zoom: 15, duration: 800 });
+  }
+}
+
+function setPlayPauseUI(playing) {
+  $('#rp-play-icon').style.display = playing ? 'none' : 'block';
+  $('#rp-pause-icon').style.display = playing ? 'block' : 'none';
+}
+
+function startFadeTimer() {
+  if (state.replay.fadeTimer) clearTimeout(state.replay.fadeTimer);
+  $('#replay-overlay').classList.remove('replay-fade');
+  state.replay.fadeTimer = setTimeout(() => {
+    if (state.replay.playing) $('#replay-overlay').classList.add('replay-fade');
+  }, 3000);
+}
+
+function rafLoop(day) {
+  const r = state.replay;
+  function frame(now) {
+    if (!r.active) return;
+    try {
+      const dt = now - r.lastFrame;
+      r.lastFrame = now;
+
+      if (r.playing) {
+        r.tripTime += dt * r.speed;
+        if (r.tripTime >= r.totalTime) {
+          if (r.loop) {
+            r.tripTime = 0;
+            r.pointIdx = 0;
+            r.smoothLat = null; r.smoothLng = null; r.smoothBearing = null;
+          } else {
+            r.tripTime = r.totalTime;
+            r.playing = false;
+            setPlayPauseUI(false);
+          }
+        }
+        r.progress = r.tripTime / r.totalTime;
+      }
+
+      renderReplayFrame(day);
+    } catch (e) {
+      console.warn('replay frame error (continuing):', e);
+    }
+    r.rafId = requestAnimationFrame(frame);
+  }
+  r.rafId = requestAnimationFrame(frame);
+}
+
+function renderReplayFrame(day) {
+  const r = state.replay;
+  const points = day.points;
+  const startTs = points[0].ts;
+  const targetTs = startTs + r.tripTime;
+
+  while (r.pointIdx < points.length - 1 && points[r.pointIdx + 1].ts < targetTs) r.pointIdx++;
+
+  const p1 = points[r.pointIdx];
+  const p2 = points[Math.min(r.pointIdx + 1, points.length - 1)];
+  const segDur = (p2.ts - p1.ts) || 1;
+  const t = Math.max(0, Math.min(1, (targetTs - p1.ts) / segDur));
+  const rawLat = p1.lat + (p2.lat - p1.lat) * t;
+  const rawLng = p1.lng + (p2.lng - p1.lng) * t;
+
+  // Bearing computed over ~40m lookahead window — averages out tiny turns
+  const LOOKAHEAD_M = 40;
+  let aheadIdx = r.pointIdx;
+  let cum = 0;
+  for (let i = r.pointIdx; i < points.length - 1; i++) {
+    cum += haversine(points[i].lat, points[i].lng, points[i+1].lat, points[i+1].lng);
+    aheadIdx = i + 1;
+    if (cum >= LOOKAHEAD_M) break;
+  }
+  // Also look slightly behind so bearing reflects local tangent, not just forward jitter
+  let behindIdx = r.pointIdx;
+  let cumB = 0;
+  for (let i = r.pointIdx; i > 0; i--) {
+    cumB += haversine(points[i].lat, points[i].lng, points[i-1].lat, points[i-1].lng);
+    behindIdx = i - 1;
+    if (cumB >= 10) break;
+  }
+  let rawBearing = r.smoothBearing ?? 0;
+  const aheadPt = points[aheadIdx];
+  const behindPt = points[behindIdx];
+  if (aheadPt && behindPt && (aheadPt.lat !== behindPt.lat || aheadPt.lng !== behindPt.lng)) {
+    rawBearing = calcBearing(behindPt.lat, behindPt.lng, aheadPt.lat, aheadPt.lng);
+  }
+
+  // Aggressive smoothing — kills shake without losing the sense of motion
+  if (r.smoothLat == null) {
+    r.smoothLat = rawLat; r.smoothLng = rawLng; r.smoothBearing = rawBearing;
+  } else {
+    const aPos  = 0.30;   // position keeps up
+    const aBear = 0.05;   // bearing turns slowly = no shake
+    r.smoothLat += (rawLat - r.smoothLat) * aPos;
+    r.smoothLng += (rawLng - r.smoothLng) * aPos;
+    let diff = ((rawBearing - r.smoothBearing + 540) % 360) - 180;
+    r.smoothBearing = (r.smoothBearing + diff * aBear + 360) % 360;
+  }
+  const lat = r.smoothLat;
+  const lng = r.smoothLng;
+  const bearing = r.smoothBearing;
+
+  // Camera
+  if (r.viewMode === 'walker') {
+    applyWalkerCamera(lat, lng, bearing);
+  } else if (r.viewMode === 'follow') {
+    // Lock-on: re-center every frame but keep user's pitch/bearing/zoom
+    state.map.jumpTo({ center: [lng, lat] });
+  } else if (r.viewMode !== 'free') {
+    const cfg = getCameraConfig(r.viewMode, lat, lng, bearing);
+    state.map.jumpTo(cfg);
+  }
+
+  // Live position marker (hidden in first-person walker mode)
+  updateWalkerMarker(lat, lng, bearing);
+
+  // Trail behind (points up to interpolated current)
+  const behindPts = points.slice(0, r.pointIdx + 1);
+  behindPts.push({ lat, lng });
+  setTrail(behindPts);
+  // Trail ahead
+  const aheadPts = [{ lat, lng }, ...points.slice(r.pointIdx + 1)];
+  setTrailAhead(aheadPts);
+
+  // HUD
+  $('#rp-time').textContent = formatClock(targetTs);
+  let dist = 0;
+  for (let i = 1; i < behindPts.length; i++) {
+    dist += haversine(behindPts[i-1].lat, behindPts[i-1].lng, behindPts[i].lat, behindPts[i].lng);
+  }
+  $('#rp-dist').textContent = formatDistance(dist);
+  $('#rp-fill').style.width = (r.progress * 100) + '%';
+  $('#rp-thumb').style.left = (r.progress * 100) + '%';
+}
+
+// Replay controls
+$('#rp-playpause').addEventListener('click', () => {
+  state.replay.playing = !state.replay.playing;
+  setPlayPauseUI(state.replay.playing);
+  startFadeTimer();
+});
+$('#rp-close').addEventListener('click', stopReplay);
+$('#rp-reset').addEventListener('click', () => {
+  state.replay.tripTime = 0;
+  state.replay.pointIdx = 0;
+  state.replay.progress = 0;
+  state.replay.smoothLat = null;
+  state.replay.smoothLng = null;
+  state.replay.smoothBearing = null;
+  startFadeTimer();
+});
+$('#rp-speed').addEventListener('click', () => {
+  const speeds = [10, 50, 200, 500];
+  const idx = speeds.indexOf(state.replay.speed);
+  state.replay.speed = speeds[(idx + 1) % speeds.length];
+  $('#rp-speed').textContent = state.replay.speed + 'x';
+  startFadeTimer();
+});
+$('#rp-loop').addEventListener('click', () => {
+  state.replay.loop = !state.replay.loop;
+  $('#rp-loop').style.color = state.replay.loop ? 'var(--terracotta-2)' : 'var(--text)';
+  toast(state.replay.loop ? 'Loop on' : 'Loop off');
+});
+
+// Scrub progress
+let scrubbing = false;
+function progressFromEvent(e) {
+  const el = $('#rp-progress');
+  const rect = el.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+  return Math.max(0, Math.min(1, x / rect.width));
+}
+$('#rp-progress').addEventListener('pointerdown', e => {
+  scrubbing = true;
+  state.replay.progress = progressFromEvent(e);
+  state.replay.tripTime = state.replay.progress * state.replay.totalTime;
+  state.replay.pointIdx = 0;
+  state.replay.smoothLat = null;
+  state.replay.smoothLng = null;
+  state.replay.smoothBearing = null;
+  startFadeTimer();
+});
+window.addEventListener('pointermove', e => {
+  if (!scrubbing) return;
+  state.replay.progress = progressFromEvent(e);
+  state.replay.tripTime = state.replay.progress * state.replay.totalTime;
+  state.replay.pointIdx = 0;
+});
+window.addEventListener('pointerup', () => { scrubbing = false; });
+
+// View mode buttons
+$$('#view-modes button').forEach(b => {
+  b.addEventListener('click', () => {
+    $$('#view-modes button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    state.replay.viewMode = b.dataset.mode;
+    startFadeTimer();
+  });
+});
+
+// Tap map to clear fade
+['pointerdown', 'wheel'].forEach(evt => {
+  $('#map').addEventListener(evt, () => {
+    if (state.replay.active) startFadeTimer();
+  });
+});
+
+// User gesture during replay → auto-switch to Free mode so camera doesn't fight them
+function bindUserGestureAutoFree() {
+  const onUserMove = () => {
+    if (state.replay.active && state.replay.viewMode !== 'free' && !state._programmaticMove) {
+      state.replay.viewMode = 'free';
+      $$('#view-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'free'));
+      toast('🎥 Free camera — drag to pan · two-finger / Ctrl+drag to rotate', { up: true, duration: 3500 });
+    }
+  };
+  // Use the events that fire only from real user input (not programmatic jumpTo/easeTo)
+  state.map.on('dragstart', onUserMove);
+  state.map.on('rotatestart', onUserMove);
+  state.map.on('pitchstart', onUserMove);
+  state.map.on('zoomstart', e => { if (e.originalEvent) onUserMove(); });
+}
+
+// Capture frame
+$('#btn-capture').addEventListener('click', () => {
+  try {
+    const canvas = state.map.getCanvas();
+    canvas.toBlob(blob => {
+      if (!blob) { toast('Capture failed'); return; }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `walker-${Date.now()}.png`;
+      a.click();
+      toast('Saved screenshot');
+    }, 'image/png');
+  } catch (e) {
+    toast('Capture failed');
+  }
+});
+
+// Skip ahead with arrow keys
+window.addEventListener('keydown', e => {
+  if (!state.replay.active) return;
+  if (e.key === 'ArrowRight') {
+    state.replay.tripTime = Math.min(state.replay.totalTime, state.replay.tripTime + 30000 * state.replay.speed);
+  } else if (e.key === 'ArrowLeft') {
+    state.replay.tripTime = Math.max(0, state.replay.tripTime - 30000 * state.replay.speed);
+    state.replay.pointIdx = 0;
+  } else if (e.key === ' ') {
+    e.preventDefault();
+    state.replay.playing = !state.replay.playing;
+    setPlayPauseUI(state.replay.playing);
+  }
+  startFadeTimer();
+});
+
+// ---------- Days list & history ----------
+async function showDaysList() {
+  const all = await db.getAll('days');
+  all.sort((a, b) => b.date.localeCompare(a.date));
+  const container = $('#days-list');
+  if (all.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="ico">🗺️</div><div>No journeys yet — start your day to begin tracking</div></div>';
+  } else {
+    container.innerHTML = '';
+    for (const d of all) {
+      recalcStats(d);
+      const item = document.createElement('div');
+      item.className = 'day-item';
+      const dateLabel = formatDateLabel(d.date);
+      item.innerHTML = `
+        <div class="day-thumb">${makeThumbnailSVG(d)}</div>
+        <div class="day-info">
+          <div class="date">${dateLabel}</div>
+          <div class="meta">
+            <span>${formatDistance(d.stats.distanceM)} ${unitLabel()}</span>
+            <span>${d.waypoints.length} places</span>
+            <span>${formatDuration(d.stats.durationS*1000)}</span>
+          </div>
+        </div>
+      `;
+      item.addEventListener('click', () => showDayDetail(d.id));
+      container.appendChild(item);
+    }
+  }
+  openSheet('sheet-days');
+}
+
+function formatDateLabel(dateStr) {
+  const today = todayId().date;
+  if (dateStr === today) return 'Today';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffDays = Math.floor((now - d) / 86400000);
+  if (diffDays === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function makeThumbnailSVG(day) {
+  if (day.points.length < 2) return `<svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#1f272d"/><text x="30" y="34" text-anchor="middle" fill="#6e6a62" font-size="10">empty</text></svg>`;
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const p of day.points) {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lng < minLng) minLng = p.lng;
+    if (p.lng > maxLng) maxLng = p.lng;
+  }
+  const pad = 4;
+  const w = 60 - pad*2;
+  const sx = (maxLng - minLng) || 0.0001;
+  const sy = (maxLat - minLat) || 0.0001;
+  const scale = Math.min(w/sx, w/sy);
+  const cx = (minLng + maxLng) / 2;
+  const cy = (minLat + maxLat) / 2;
+  const pts = day.points.map(p => {
+    const x = 30 + (p.lng - cx) * scale;
+    const y = 30 - (p.lat - cy) * scale;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#1f272d"/><polyline points="${pts}" fill="none" stroke="#e09972" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
+}
+
+let detailDayId = null;
+async function showDayDetail(id) {
+  const d = await db.get('days', id);
+  if (!d) return;
+  recalcStats(d);
+  detailDayId = id;
+  $('#dd-title').textContent = formatDateLabel(d.date) + ' · ' + d.date;
+  $('#dd-distance').textContent = formatDistance(d.stats.distanceM);
+  $('#dd-distance').nextElementSibling.textContent = unitLabel();
+  $('#dd-waypoints').textContent = d.waypoints.length;
+  $('#dd-duration').textContent = formatDuration(d.stats.durationS * 1000);
+  $('#dd-gist').style.display = state.settings.githubToken ? 'block' : 'none';
+  openSheet('sheet-day-detail');
+}
+
+$('#dd-replay').addEventListener('click', async () => {
+  const d = await db.get('days', detailDayId);
+  if (!d) return;
+  state.loadedDay = d;
+  refreshMapForDay(d);
+  closeSheet();
+  setTimeout(() => startReplay(d), 600);
+});
+$('#dd-load').addEventListener('click', async () => {
+  const d = await db.get('days', detailDayId);
+  state.loadedDay = d;
+  refreshMapForDay(d);
+  refreshUI();
+  closeSheet();
+});
+$('#dd-json').addEventListener('click', async () => {
+  const d = await db.get('days', detailDayId);
+  const text = JSON.stringify(d, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('JSON copied to clipboard');
+  } catch (e) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type:'application/json'}));
+    a.download = `${d.id}.json`;
+    a.click();
+    toast('Downloaded JSON');
+  }
+});
+$('#dd-gpx').addEventListener('click', async () => {
+  const d = await db.get('days', detailDayId);
+  const gpx = makeGPX(d);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([gpx], {type:'application/gpx+xml'}));
+  a.download = `${d.id}.gpx`;
+  a.click();
+  toast('Downloaded GPX');
+});
+$('#dd-share').addEventListener('click', async () => {
+  const d = await db.get('days', detailDayId);
+  const text = `${formatDateLabel(d.date)}: walked ${formatDistance(d.stats.distanceM)} ${unitLabel()}, visited ${d.waypoints.length} places.`;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Day Walker journey', text }); }
+    catch (e) {}
+  } else {
+    await navigator.clipboard.writeText(text);
+    toast('Copied summary');
+  }
+});
+$('#dd-gist').addEventListener('click', async () => {
+  const d = await db.get('days', detailDayId);
+  if (!state.settings.githubToken) { toast('Add GitHub token in Settings'); return; }
+  toast('Uploading…');
+  try {
+    const res = await fetch('https://api.github.com/gists', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'token ' + state.settings.githubToken,
+        'Accept': 'application/vnd.github+json'
+      },
+      body: JSON.stringify({
+        description: `Day Walker journey ${d.date}`,
+        public: false,
+        files: { [`${d.id}.json`]: { content: JSON.stringify(d) } }
+      })
+    });
+    if (!res.ok) throw new Error('Gist failed');
+    const data = await res.json();
+    await navigator.clipboard.writeText(data.html_url);
+    toast('Gist URL copied');
+  } catch (e) {
+    toast('Upload failed');
+  }
+});
+$('#dd-delete').addEventListener('click', async () => {
+  if (!confirm('Delete this day permanently?')) return;
+  await db.delete('days', detailDayId);
+  closeSheet();
+  if (state.currentDay?.id === detailDayId || state.loadedDay?.id === detailDayId) {
+    await loadOrCreateToday();
+  }
+  toast('Day deleted');
+});
+
+function makeGPX(day) {
+  const trkpts = day.points.map(p =>
+    `      <trkpt lat="${p.lat}" lon="${p.lng}"><time>${new Date(p.ts).toISOString()}</time>${p.alt!=null?`<ele>${p.alt}</ele>`:''}</trkpt>`
+  ).join('\n');
+  const wpts = day.waypoints.map(w =>
+    `  <wpt lat="${w.lat}" lon="${w.lng}"><name>${escapeHtml(w.name)}</name>${w.note?`<desc>${escapeHtml(w.note)}</desc>`:''}<time>${new Date(w.ts).toISOString()}</time></wpt>`
+  ).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Day Walker" xmlns="http://www.topografix.com/GPX/1/1">
+${wpts}
+  <trk><name>Day ${day.date}</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+}
+
+// ---------- Settings UI ----------
+function openSettings() {
+  $('#set-units').value = state.settings.units;
+  $('#set-interval').value = state.settings.trackInterval / 1000;
+  $('#set-mindist').value = state.settings.minDistance;
+  $('#set-acc').value = state.settings.accuracyMax;
+  $('#set-speed').value = state.settings.defaultSpeed;
+  $('#set-view').value = state.settings.defaultView;
+  $('#set-token').value = state.settings.githubToken;
+  openSheet('sheet-settings');
+}
+
+$('#set-save').addEventListener('click', async () => {
+  await saveSetting('units', $('#set-units').value);
+  await saveSetting('trackInterval', Math.max(1, Number($('#set-interval').value)) * 1000);
+  await saveSetting('minDistance', Math.max(0, Number($('#set-mindist').value)));
+  await saveSetting('accuracyMax', Math.max(5, Number($('#set-acc').value)));
+  await saveSetting('defaultSpeed', Number($('#set-speed').value));
+  await saveSetting('defaultView', $('#set-view').value);
+  await saveSetting('githubToken', $('#set-token').value.trim());
+  refreshUI();
+  closeSheet();
+  toast('Settings saved');
+});
+$('#set-demo').addEventListener('click', async () => {
+  closeSheet();
+  await runDemoFromBakedRoute();
+});
+$('#set-clear').addEventListener('click', async () => {
+  if (!confirm('This deletes ALL journeys & settings. Continue?')) return;
+  await db.clear('days');
+  await db.clear('settings');
+  location.reload();
+});
+
+// ---------- Wire up main UI ----------
+$('#btn-track').addEventListener('click', () => {
+  if (state.tracking) stopTracking();
+  else startTracking();
+});
+$('#btn-waypoint').addEventListener('click', openWaypointSheet);
+$('#wp-save').addEventListener('click', saveWaypoint);
+$('#wp-cancel').addEventListener('click', closeSheet);
+$('#btn-replay').addEventListener('click', () => {
+  if (state.loadedDay) startReplay(state.loadedDay);
+});
+$('#btn-days').addEventListener('click', showDaysList);
+$('#btn-settings').addEventListener('click', openSettings);
+// ---------- Plan custom journey ----------
+const pickPins = { from: null, to: null };
+function clearPickPins() {
+  for (const k of Object.keys(pickPins)) {
+    if (pickPins[k]) { pickPins[k].remove(); pickPins[k] = null; }
+  }
+}
+function dropPickPin(which, lng, lat) {
+  if (pickPins[which]) pickPins[which].remove();
+  const isStart = which === 'from';
+  const color = isStart ? '#6fa86a' : '#d96a5b';
+  const letter = isStart ? 'A' : 'B';
+  const el = document.createElement('div');
+  el.style.cssText = `width:28px;height:28px;border-radius:50%;background:${color};border:3px solid #f4ede0;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px;font-family:'Inter Tight',sans-serif;`;
+  el.textContent = letter;
+  pickPins[which] = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(state.map);
+}
+function pickOnMap(which) {
+  return new Promise(resolve => {
+    state.map.getCanvas().style.cursor = 'crosshair';
+    toast(`Tap to place ${which === 'from' ? 'start (A)' : 'end (B)'} pin`, { up: true, duration: 4000 });
+    const onClick = e => {
+      state.map.off('click', onClick);
+      state.map.getCanvas().style.cursor = '';
+      const { lat, lng } = e.lngLat;
+      dropPickPin(which, lng, lat);
+      resolve({ lat, lng });
+    };
+    state.map.on('click', onClick);
+  });
+}
+
+function openPlanSheet() {
+  // Pre-fill end/start with map center if empty
+  const c = state.map?.getCenter?.();
+  if (c && !$('#plan-from-lat').value) {
+    $('#plan-from-lat').value = c.lat.toFixed(6);
+    $('#plan-from-lng').value = c.lng.toFixed(6);
+  }
+  openSheet('sheet-plan');
+}
+
+$('#set-plan').addEventListener('click', () => { closeSheet(); setTimeout(openPlanSheet, 250); });
+
+$('#plan-pick-from').addEventListener('click', async () => {
+  closeSheet();
+  const p = await pickOnMap('from');
+  $('#plan-from-lat').value = p.lat.toFixed(6);
+  $('#plan-from-lng').value = p.lng.toFixed(6);
+  openSheet('sheet-plan');
+});
+$('#plan-pick-to').addEventListener('click', async () => {
+  closeSheet();
+  const p = await pickOnMap('to');
+  $('#plan-to-lat').value = p.lat.toFixed(6);
+  $('#plan-to-lng').value = p.lng.toFixed(6);
+  openSheet('sheet-plan');
+});
+$('#plan-here-from').addEventListener('click', () => {
+  if (!navigator.geolocation) return toast('Geolocation unavailable');
+  toast('Getting GPS…', { up: true });
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      $('#plan-from-lat').value = pos.coords.latitude.toFixed(6);
+      $('#plan-from-lng').value = pos.coords.longitude.toFixed(6);
+      toast('GPS set', { up: true });
+    },
+    err => toast('GPS failed: ' + (err.message || err.code), { up: true }),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
+$('#plan-cancel').addEventListener('click', () => { clearPickPins(); closeSheet(); });
+$('#plan-generate').addEventListener('click', async () => {
+  const fromLat = parseFloat($('#plan-from-lat').value);
+  const fromLng = parseFloat($('#plan-from-lng').value);
+  const toLat = parseFloat($('#plan-to-lat').value);
+  const toLng = parseFloat($('#plan-to-lng').value);
+  if (![fromLat, fromLng, toLat, toLng].every(Number.isFinite)) {
+    toast('Please fill in all 4 coordinates');
+    return;
+  }
+  const profile = $('#plan-mode').value;
+  const speedKmh = parseFloat($('#plan-speed').value) || undefined;
+  clearPickPins();
+  closeSheet();
+  await dwSimulate(fromLat, fromLng, toLat, toLng, { profile, speedKmh });
+});
+
+// Auto-update speed default when profile changes
+$('#plan-mode').addEventListener('change', () => {
+  const p = $('#plan-mode').value;
+  $('#plan-speed').value = p === 'driving' ? 30 : (p === 'bike' ? 15 : 5);
+});
+
+$('#btn-basemap').addEventListener('click', () => {
+  const next = state.basemap === 'satellite' ? 'street' : 'satellite';
+  switchBasemap(next);
+  toast(next === 'satellite' ? '🛰️ Satellite view' : '🗺️ Street view');
+});
+
+// detect user panning
+let panTimer;
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (state.map) {
+      state.map.on('dragstart', () => {
+        state._userPanning = true;
+        clearTimeout(panTimer);
+        panTimer = setTimeout(() => { state._userPanning = false; }, 8000);
+      });
+    }
+  }, 1500);
+});
+
+// ---------- Pre-baked demo route (real OSRM walking route, on roads) ----------
+// From 13.650552,100.443979 → 13.669074,100.448460  ·  3744.9 m
+const DEMO_ROUTE = [
+  [100.443997,13.650555],[100.44398,13.650735],[100.443815,13.650701],[100.443715,13.650681],
+  [100.443601,13.650672],[100.443508,13.65066],[100.443483,13.65085],[100.44345,13.651094],
+  [100.443386,13.651571],[100.443302,13.652054],[100.44319,13.652858],[100.44315,13.653516],
+  [100.443124,13.653679],[100.443114,13.653816],[100.443095,13.6539],[100.443082,13.65399],
+  [100.443044,13.654093],[100.443009,13.654175],[100.442973,13.654249],[100.442787,13.654764],
+  [100.442625,13.655135],[100.442556,13.655299],[100.442515,13.65541],[100.442484,13.655539],
+  [100.442467,13.655672],[100.442459,13.655834],[100.442413,13.656573],[100.442396,13.656831],
+  [100.442348,13.657661],[100.442325,13.658289],[100.442292,13.658828],[100.442286,13.658958],
+  [100.442278,13.659294],[100.442279,13.659342],[100.442281,13.659438],[100.442289,13.659588],
+  [100.442327,13.660497],[100.44233,13.660667],[100.44234,13.661151],[100.442351,13.661804],
+  [100.442347,13.661857],[100.442339,13.661957],[100.442314,13.662132],[100.442278,13.662297],
+  [100.442261,13.662366],[100.442248,13.662408],[100.44222,13.662496],[100.442177,13.662621],
+  [100.442139,13.662722],[100.442105,13.662794],[100.442042,13.662931],[100.441997,13.663015],
+  [100.441929,13.663111],[100.441877,13.663154],[100.441808,13.66326],[100.441653,13.663502],
+  [100.441311,13.663301],[100.441088,13.663172],[100.44086,13.663051],[100.440638,13.662919],
+  [100.440398,13.662775],[100.440225,13.662662],[100.439925,13.662508],[100.439783,13.662418],
+  [100.439583,13.662305],[100.43909,13.662001],[100.438468,13.661637],[100.43782,13.661257],
+  [100.437504,13.66106],[100.437289,13.660922],[100.437205,13.660876],[100.437143,13.660854],
+  [100.437076,13.660855],[100.437021,13.660875],[100.436976,13.660906],[100.436944,13.660944],
+  [100.436914,13.660993],[100.4369,13.661038],[100.4369,13.661095],[100.436907,13.661137],
+  [100.436934,13.661184],[100.436966,13.661208],[100.437001,13.661233],[100.437049,13.661263],
+  [100.437287,13.661384],[100.437777,13.661678],[100.437968,13.661791],[100.438291,13.661986],
+  [100.438789,13.662288],[100.439234,13.662556],[100.439374,13.662649],[100.439458,13.662702],
+  [100.439813,13.662989],[100.4399,13.663045],[100.439995,13.663103],[100.440077,13.663155],
+  [100.440556,13.663449],[100.441768,13.6642],[100.441943,13.664306],[100.442252,13.664493],
+  [100.442501,13.664645],[100.442869,13.664871],[100.443489,13.665254],[100.443831,13.665471],
+  [100.444391,13.665805],[100.445369,13.666374],[100.445616,13.666526],[100.445746,13.666606],
+  [100.445947,13.66673],[100.446267,13.666927],[100.446476,13.667053],[100.446504,13.667069],
+  [100.447122,13.667445],[100.447982,13.667968],[100.448926,13.668547],[100.448911,13.66857],
+  [100.448857,13.668653],[100.448784,13.668766],[100.448705,13.668889],[100.448722,13.669048]
+];
+const DEMO_ROUTE_DIST_M = 3744.9;
+
+// Build a day directly from a polyline of [lng,lat] pairs — no network call.
+async function runDemoFromBakedRoute() {
+  const coordsLL = DEMO_ROUTE.map(([lng, lat]) => ({ lat, lng }));
+  // 1) RDP simplify (12m tolerance) — drops micro-wiggles
+  // 2) Chaikin (4 passes) — rounds remaining corners
+  // 3) Densify to ~4m steps — smooth motion during replay
+  const simplified = rdpSimplify(coordsLL, 12);
+  console.log('[route] simplified:', coordsLL.length, '→', simplified.length, 'pts');
+  const smoothed = chaikinSmooth(simplified, 4);
+  const dense = densifyRoute(smoothed, 4);
+
+  // Recompute total distance from smoothed path
+  let totalDistM = 0;
+  for (let i = 1; i < dense.length; i++) {
+    totalDistM += haversine(dense[i-1].lat, dense[i-1].lng, dense[i].lat, dense[i].lng);
+  }
+
+  const walkSpeedMps = 1.35;
+  const totalMs = (totalDistM / walkSpeedMps) * 1000;
+  const endTs = Date.now();
+  const startTs = endTs - totalMs;
+
+  const points = [];
+  let accDist = 0;
+  for (let i = 0; i < dense.length; i++) {
+    const c = dense[i];
+    if (i > 0) accDist += haversine(dense[i-1].lat, dense[i-1].lng, c.lat, c.lng);
+    const t = totalDistM > 0 ? accDist / totalDistM : 0;
+    points.push({
+      lat: c.lat,
+      lng: c.lng,
+      alt: 10, acc: 4,
+      spd: walkSpeedMps,
+      ts: startTs + Math.floor(t * totalMs)
+    });
+  }
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].ts <= points[i-1].ts) points[i].ts = points[i-1].ts + 1;
+  }
+
+  const makeWP = (frac, name, note) => {
+    const idx = Math.min(points.length - 1, Math.max(0, Math.floor(points.length * frac)));
+    const p = points[idx];
+    return { id: 'wp_' + Math.random().toString(36).slice(2, 10),
+             lat: p.lat, lng: p.lng, name, note: note || '',
+             photoBase64: null, ts: p.ts };
+  };
+  const waypoints = [
+    makeWP(0.0,  'จุดเริ่มต้น'),
+    makeWP(0.3,  'จุดพัก',  'พักดื่มน้ำ'),
+    makeWP(0.65, 'มุมถนน',  'เลี้ยวต่อ'),
+    makeWP(1.0,  'ปลายทาง', 'ถึงที่หมาย')
+  ];
+
+  const { id, date } = todayId();
+  const day = {
+    id, date, startedAt: startTs, endedAt: endTs,
+    status: 'completed', points, waypoints, stats: {}
+  };
+  recalcStats(day);
+  await db.put('days', day);
+  state.currentDay = day;
+  state.loadedDay = day;
+  refreshUI();
+  refreshMapForDay(day);
+  setTimeout(() => {
+    if (!state.mapReady) return;
+    const bounds = points.reduce((b, p) => b.extend([p.lng, p.lat]),
+      new maplibregl.LngLatBounds([points[0].lng, points[0].lat], [points[0].lng, points[0].lat]));
+    state.map.fitBounds(bounds, { padding: 80, pitch: 45, bearing: 0, duration: 1000 });
+  }, 600);
+  toast(`Demo: ${formatDistance(DEMO_ROUTE_DIST_M)} ${unitLabel()} along real roads · tap ▶️ to replay`, { up: true, duration: 4500 });
+}
+
+// ---------- Simulation (testing) ----------
+// Trigger via URL hash:
+//   #sim=fromLat,fromLng,toLat,toLng[,minutes]
+// or call from console:
+//   dwSimulate(fromLat, fromLng, toLat, toLng, { durationMin: 25 })
+// Fetch route on roads. Tries OSRM public, then Valhalla (FOSSGIS), then null.
+// profile: 'foot' | 'driving' | 'bike'
+async function fetchWalkingRoute(fromLat, fromLng, toLat, toLng, profile = 'foot') {
+  // Provider 1: OSRM public demo server
+  try {
+    const osrmProfile = profile === 'bike' ? 'cycling' : profile; // OSRM uses 'cycling'
+    const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
+    console.log('[routing] OSRM →', url);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const res = await fetch(url, { mode: 'cors', signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const coords = data?.routes?.[0]?.geometry?.coordinates;
+    const distM = data?.routes?.[0]?.distance;
+    if (!coords || coords.length < 2) throw new Error('Empty route');
+    console.log('[routing] OSRM ok:', coords.length, 'pts,', distM, 'm');
+    return { coords: coords.map(([lng, lat]) => ({ lat, lng })), distanceM: distM, provider: 'OSRM' };
+  } catch (e) { console.warn('[routing] OSRM failed:', e.message); }
+
+  // Provider 2: Valhalla via FOSSGIS public instance
+  try {
+    const valhallaCosting = profile === 'driving' ? 'auto' : (profile === 'bike' ? 'bicycle' : 'pedestrian');
+    const body = {
+      locations: [{ lat: fromLat, lon: fromLng }, { lat: toLat, lon: toLng }],
+      costing: valhallaCosting,
+      directions_options: { units: 'kilometers' }
+    };
+    const url = 'https://valhalla1.openstreetmap.de/route';
+    console.log('[routing] Valhalla →', url);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const res = await fetch(url, {
+      method: 'POST', mode: 'cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const shape = data?.trip?.legs?.[0]?.shape;
+    const distKm = data?.trip?.summary?.length;
+    if (!shape) throw new Error('No shape');
+    const coords = decodePolyline6(shape);
+    console.log('[routing] Valhalla ok:', coords.length, 'pts,', distKm, 'km');
+    return { coords, distanceM: distKm * 1000, provider: 'Valhalla' };
+  } catch (e) { console.warn('[routing] Valhalla failed:', e.message); }
+
+  return null;
+}
+
+// Decode Google encoded polyline with precision 1e-6 (Valhalla default).
+function decodePolyline6(str) {
+  const coords = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < str.length) {
+    let b, shift = 0, result = 0;
+    do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    const dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lat += dlat;
+    shift = 0; result = 0;
+    do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    const dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lng += dlng;
+    coords.push({ lat: lat / 1e6, lng: lng / 1e6 });
+  }
+  return coords;
+}
+
+// Densify a polyline: insert points so no segment exceeds maxStepM meters.
+function densifyRoute(coords, maxStepM = 8) {
+  const out = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a = coords[i], b = coords[i + 1];
+    const d = haversine(a.lat, a.lng, b.lat, b.lng);
+    out.push(a);
+    if (d > maxStepM) {
+      const steps = Math.ceil(d / maxStepM);
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        out.push({ lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t });
+      }
+    }
+  }
+  out.push(coords[coords.length - 1]);
+  return out;
+}
+
+// Ramer-Douglas-Peucker: drops vertices that lie close to the chord between
+// retained neighbours. Cleans up micro-wiggles in OSM road geometry.
+function rdpSimplify(coords, epsilonM = 12) {
+  if (coords.length <= 2) return coords.slice();
+  const sqDistToSeg = (p, a, b) => {
+    // Approximate Euclidean in degrees scaled to meters near this latitude
+    const latM = 111320;
+    const lngM = 111320 * Math.cos(p.lat * Math.PI / 180);
+    const ax = a.lng * lngM, ay = a.lat * latM;
+    const bx = b.lng * lngM, by = b.lat * latM;
+    const px = p.lng * lngM, py = p.lat * latM;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx*dx + dy*dy;
+    if (len2 === 0) return (px-ax)**2 + (py-ay)**2;
+    let t = ((px-ax)*dx + (py-ay)*dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t*dx, cy = ay + t*dy;
+    return (px-cx)**2 + (py-cy)**2;
+  };
+  const eps2 = epsilonM * epsilonM;
+  const keep = new Array(coords.length).fill(false);
+  keep[0] = keep[coords.length - 1] = true;
+  const stack = [[0, coords.length - 1]];
+  while (stack.length) {
+    const [lo, hi] = stack.pop();
+    let maxD = 0, idx = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const d = sqDistToSeg(coords[i], coords[lo], coords[hi]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > eps2 && idx !== -1) {
+      keep[idx] = true;
+      stack.push([lo, idx], [idx, hi]);
+    }
+  }
+  return coords.filter((_, i) => keep[i]);
+}
+
+// Chaikin's corner-cutting algorithm — rounds off sharp corners.
+// Each pass roughly doubles point count; 2-3 passes feel natural.
+function chaikinSmooth(coords, passes = 2) {
+  let pts = coords.slice();
+  for (let p = 0; p < passes; p++) {
+    const next = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      next.push({ lat: a.lat * 0.75 + b.lat * 0.25, lng: a.lng * 0.75 + b.lng * 0.25 });
+      next.push({ lat: a.lat * 0.25 + b.lat * 0.75, lng: a.lng * 0.25 + b.lng * 0.75 });
+    }
+    next.push(pts[pts.length - 1]);
+    pts = next;
+  }
+  return pts;
+}
+
+async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
+  try {
+  const profile = opts.profile || 'foot';
+  const { id, date } = todayId();
+  const endTs = Date.now();
+
+  // Pre-check straight-line distance — public OSRM rejects extreme routes
+  const directKm = haversine(fromLat, fromLng, toLat, toLng) / 1000;
+  if (directKm > 300) {
+    toast(`Distance too large (${directKm.toFixed(0)} km) — public router rejects > 300km`, { up: true, duration: 4500 });
+    return;
+  }
+
+  toast(`Routing on roads (${profile})…`, { up: true, duration: 2500 });
+  const route = await fetchWalkingRoute(fromLat, fromLng, toLat, toLng, profile);
+  let coords, totalDistM;
+  if (route && route.coords && route.coords.length >= 2) {
+    // Adaptive smoothing — fewer passes for huge routes so we don't blow up the point count.
+    // Each Chaikin pass roughly doubles points; 4 passes = 16x.
+    const n = route.coords.length;
+    const passes = n > 4000 ? 1 : n > 1500 ? 2 : n > 500 ? 3 : 4;
+    const simplified = rdpSimplify(route.coords, 12);
+    const smoothed = chaikinSmooth(simplified, passes);
+    coords = densifyRoute(smoothed, 4);
+    // Hard cap so an enormous route doesn't choke the device or IndexedDB
+    if (coords.length > 20000) {
+      const stride = Math.ceil(coords.length / 20000);
+      coords = coords.filter((_, i) => i % stride === 0 || i === coords.length - 1);
+    }
+    totalDistM = 0;
+    for (let i = 1; i < coords.length; i++) {
+      totalDistM += haversine(coords[i-1].lat, coords[i-1].lng, coords[i].lat, coords[i].lng);
+    }
+    console.log('[dwSimulate]', { profile, raw: n, simplified: simplified.length, final: coords.length, distM: totalDistM });
+    toast(`Route: ${formatDistance(totalDistM)} ${unitLabel()} · ${coords.length} pts`, { up: true, duration: 2500 });
+  } else {
+    coords = densifyRoute([{lat: fromLat, lng: fromLng}, {lat: toLat, lng: toLng}], 6);
+    totalDistM = haversine(fromLat, fromLng, toLat, toLng);
+    toast('Routing unavailable — using straight line', { up: true, duration: 2500 });
+  }
+  if (coords.length < 2) {
+    toast('Route is too short / empty'); return;
+  }
+
+  // Default speeds by profile (km/h → m/s)
+  const defaultKmh = profile === 'driving' ? 30 : (profile === 'bike' ? 15 : 5);
+  const speedMps = opts.speedMps ?? ((opts.speedKmh ?? defaultKmh) / 3.6);
+  const totalMs = (totalDistM / speedMps) * 1000;
+  const startTs = endTs - totalMs;
+
+  const points = [];
+  let accDist = 0;
+  for (let i = 0; i < coords.length; i++) {
+    const c = coords[i];
+    if (i > 0) accDist += haversine(coords[i-1].lat, coords[i-1].lng, c.lat, c.lng);
+    const t = totalDistM > 0 ? accDist / totalDistM : 0;
+    // Tiny GPS noise (~2m) so the trail looks organic
+    const noiseLat = (Math.random() - 0.5) * 0.00002;
+    const noiseLng = (Math.random() - 0.5) * 0.00002;
+    points.push({
+      lat: c.lat + noiseLat,
+      lng: c.lng + noiseLng,
+      alt: 10 + Math.random() * 1.5,
+      acc: 5 + Math.random() * 4,
+      spd: speedMps + (Math.random() - 0.5) * 0.3,
+      ts: startTs + Math.floor(t * totalMs)
+    });
+  }
+  // Ensure monotonic timestamps
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].ts <= points[i-1].ts) points[i].ts = points[i-1].ts + 1;
+  }
+  const durationMin = totalMs / 60000;
+  void durationMin; // kept for clarity
+  const makeWP = (frac, name, note) => {
+    const idx = Math.min(points.length - 1, Math.max(0, Math.floor(points.length * frac)));
+    const p = points[idx];
+    return {
+      id: 'wp_' + Math.random().toString(36).slice(2, 10),
+      lat: p.lat, lng: p.lng, name, note: note || '',
+      photoBase64: null, ts: p.ts
+    };
+  };
+  const waypoints = [
+    makeWP(0.0,  'จุดเริ่มต้น', 'ออกเดินทาง'),
+    makeWP(0.33, 'จุดพัก',     'พักเหนื่อย'),
+    makeWP(0.66, 'มุมถนน',     'เลี้ยวซ้าย'),
+    makeWP(1.0,  'ปลายทาง',    'ถึงที่หมาย')
+  ];
+  const day = {
+    id, date,
+    startedAt: startTs, endedAt: endTs,
+    status: 'completed',
+    points, waypoints,
+    stats: {}
+  };
+  recalcStats(day);
+  await db.put('days', day);
+  state.currentDay = day;
+  state.loadedDay = day;
+  refreshUI();
+  refreshMapForDay(day);
+  // Frame the whole route
+  setTimeout(() => {
+    if (!state.mapReady) return;
+    const bounds = points.reduce((b, p) => b.extend([p.lng, p.lat]),
+      new maplibregl.LngLatBounds([points[0].lng, points[0].lat], [points[0].lng, points[0].lat]));
+    state.map.fitBounds(bounds, { padding: 80, pitch: 45, bearing: 0, duration: 1000 });
+  }, 600);
+  toast(`Simulated ${formatDistance(day.stats.distanceM)} ${unitLabel()} · tap ▶️ to replay`, { up: true, duration: 4500 });
+  } catch (err) {
+    console.error('dwSimulate error:', err);
+    toast('Generate failed: ' + (err?.message || err), { up: true, duration: 5000 });
+  }
+}
+window.dwSimulate = dwSimulate;
+
+function parseSimHash() {
+  const m = (location.hash || '').match(/#sim=([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)(?:,(\d+))?/);
+  if (!m) return null;
+  return {
+    fromLat: parseFloat(m[1]), fromLng: parseFloat(m[2]),
+    toLat: parseFloat(m[3]), toLng: parseFloat(m[4]),
+    durationMin: m[5] ? parseInt(m[5]) : 25
+  };
+}
+
+// ---------- Boot ----------
+(async () => {
+  try {
+    await openDB();
+    await loadSettings();
+    initMap();
+    // Hide splash
+    setTimeout(() => $('#splash').classList.add('hide'), 900);
+    setTimeout(() => $('#splash').remove(), 1600);
+
+    // Auto-simulation from URL hash
+    const sim = parseSimHash();
+    if (sim) {
+      const tryRun = () => {
+        if (state.mapReady && db && state.currentDay) {
+          dwSimulate(sim.fromLat, sim.fromLng, sim.toLat, sim.toLng, { durationMin: sim.durationMin });
+          history.replaceState(null, '', location.pathname + location.search);
+        } else {
+          setTimeout(tryRun, 300);
+        }
+      };
+      tryRun();
+    }
+
+    // PWA service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  } catch (e) {
+    console.error(e);
+    alert('Failed to initialize: ' + (e?.message || e));
+  }
+})();
+</script>
+</body>
+</html>
