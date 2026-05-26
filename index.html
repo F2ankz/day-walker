@@ -300,28 +300,38 @@
 
   .view-modes {
     position: absolute;
-    right: 14px;
+    right: 12px;
     top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; gap: 8px;
+    display: flex; flex-direction: column; gap: 6px;
     transition: opacity .4s;
   }
   .view-modes button {
-    width: 46px; height: 46px;
-    border-radius: 50%;
+    min-width: 92px;
+    height: 38px;
+    padding: 0 10px 0 8px;
+    border-radius: 22px;
     background: var(--surface);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--line);
     color: var(--text-dim);
-    font-size: 18px;
+    font-family: 'Inter Tight', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
     transition: all .2s;
+    display: flex; align-items: center; justify-content: flex-start; gap: 8px;
   }
+  .view-modes button .ico { font-size: 16px; line-height: 1; }
+  .view-modes button .lbl { line-height: 1; letter-spacing: 0.2px; }
   .view-modes button.active {
     background: var(--terracotta);
     border-color: var(--terracotta);
     color: white;
-    transform: scale(1.05);
+    transform: scale(1.03);
+  }
+  @media (max-width: 380px) {
+    .view-modes button { min-width: 78px; font-size: 11px; }
   }
 
   .replay-fade .replay-bottom,
@@ -675,11 +685,11 @@
 
   <div id="replay-overlay">
     <div class="view-modes" id="view-modes">
-      <button data-mode="walker" class="active" title="Walker (first-person)">🚶</button>
-      <button data-mode="follow" title="Lock follow — keeps your angle">🎯</button>
-      <button data-mode="drone" title="Drone view">🚁</button>
-      <button data-mode="top" title="Top-down">🗺️</button>
-      <button data-mode="free" title="Free camera">🎥</button>
+      <button data-mode="walker" title="First-person eye-level view"><span class="ico">🚶</span><span class="lbl">Walker</span></button>
+      <button data-mode="follow" title="Lock-follow · rotate/zoom freely"><span class="ico">🎯</span><span class="lbl">Follow</span></button>
+      <button data-mode="drone" class="active" title="Behind-and-above flying view"><span class="ico">🚁</span><span class="lbl">Drone</span></button>
+      <button data-mode="top" title="Bird-eye top-down view"><span class="ico">🗺️</span><span class="lbl">Top</span></button>
+      <button data-mode="free" title="Free camera — full control"><span class="ico">🎥</span><span class="lbl">Free</span></button>
     </div>
 
     <button class="capture-fab" id="btn-capture" title="Capture moment">
@@ -1884,20 +1894,21 @@ $$('#view-modes button').forEach(b => {
   });
 });
 
-// User gesture during replay → auto-switch to Free mode so camera doesn't fight them
+// User gesture during replay → maybe auto-switch to Free mode.
+// In Follow mode, rotate/zoom/pitch are ALLOWED without losing the lock.
+// Only a pan (drag) escapes to Free, because pan fights the center-recenter every frame.
 function bindUserGestureAutoFree() {
-  const onUserMove = () => {
-    if (state.replay.active && state.replay.viewMode !== 'free' && !state._programmaticMove) {
-      state.replay.viewMode = 'free';
-      $$('#view-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'free'));
-      toast('🎥 Free camera — drag to pan · two-finger / Ctrl+drag to rotate', { up: true, duration: 3500 });
-    }
+  const switchToFree = (reason) => {
+    if (!state.replay.active || state.replay.viewMode === 'free') return;
+    if (state.replay.viewMode === 'follow' && reason !== 'pan') return; // allow rotate/zoom/pitch in follow
+    state.replay.viewMode = 'free';
+    $$('#view-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'free'));
+    toast('🎥 Free camera', { up: true, duration: 2500 });
   };
-  // Use the events that fire only from real user input (not programmatic jumpTo/easeTo)
-  state.map.on('dragstart', onUserMove);
-  state.map.on('rotatestart', onUserMove);
-  state.map.on('pitchstart', onUserMove);
-  state.map.on('zoomstart', e => { if (e.originalEvent) onUserMove(); });
+  state.map.on('dragstart',   () => switchToFree('pan'));
+  state.map.on('rotatestart', () => switchToFree('rotate'));
+  state.map.on('pitchstart',  () => switchToFree('pitch'));
+  state.map.on('zoomstart',   e => { if (e.originalEvent) switchToFree('zoom'); });
 }
 
 // Capture frame
