@@ -1013,6 +1013,7 @@ const state = {
     waypointMarkers: []
   },
   liveMarkers: [],
+  planEndpoints: null,
 };
 
 let db;
@@ -1624,6 +1625,8 @@ function startTracking() {
   state.tracking = true;
   state.smoothBuf = [];
   state.lastPoint = state.currentDay.points.at(-1) || null;
+  // Real GPS tracking — clear planned-route pins
+  clearPickPins();
 
   state.watchId = navigator.geolocation.watchPosition(
     handlePosition,
@@ -2364,6 +2367,7 @@ $('#dd-load').addEventListener('click', async () => {
   state.loadedDay = d;
   refreshMapForDay(d);
   refreshUI();
+  clearPickPins();
   closeSheet();
 });
 $('#dd-json').addEventListener('click', async () => {
@@ -2506,20 +2510,47 @@ $('#stat-waypoints-tile').addEventListener('click', () => {
 $('#btn-settings').addEventListener('click', openSettings);
 // ---------- Plan custom journey ----------
 const pickPins = { from: null, to: null };
+let routeInFlight = false;
 function clearPickPins() {
   for (const k of Object.keys(pickPins)) {
     if (pickPins[k]) { pickPins[k].remove(); pickPins[k] = null; }
   }
+  state.planEndpoints = null;
 }
-function dropPickPin(which, lng, lat) {
+function dropPickPin(which, lng, lat, draggable = false) {
   if (pickPins[which]) pickPins[which].remove();
   const isStart = which === 'from';
   const color = isStart ? '#6fa86a' : '#d96a5b';
   const letter = isStart ? 'A' : 'B';
   const el = document.createElement('div');
-  el.style.cssText = `width:28px;height:28px;border-radius:50%;background:${color};border:3px solid #f4ede0;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px;font-family:'Inter Tight',sans-serif;`;
+  el.style.cssText = `width:30px;height:30px;border-radius:50%;background:${color};border:3px solid #f4ede0;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:14px;font-family:'Inter Tight',sans-serif;cursor:${draggable ? 'grab' : 'default'};`;
   el.textContent = letter;
-  pickPins[which] = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(state.map);
+  const m = new maplibregl.Marker({ element: el, anchor: 'center', draggable })
+    .setLngLat([lng, lat])
+    .addTo(state.map);
+  if (draggable) {
+    m.on('dragstart', () => { el.style.cursor = 'grabbing'; });
+    m.on('dragend', async () => {
+      el.style.cursor = 'grab';
+      const ll = m.getLngLat();
+      await onEndpointDragged(which, ll.lat, ll.lng);
+    });
+  }
+  pickPins[which] = m;
+}
+
+async function onEndpointDragged(which, lat, lng) {
+  if (routeInFlight || !state.planEndpoints) return;
+  state.planEndpoints[which] = { lat, lng };
+  const ep = state.planEndpoints;
+  routeInFlight = true;
+  try {
+    await dwSimulate(ep.from.lat, ep.from.lng, ep.to.lat, ep.to.lng, {
+      profile: ep.profile, speedKmh: ep.speedKmh
+    });
+  } finally {
+    routeInFlight = false;
+  }
 }
 function pickOnMap(which) {
   return new Promise(resolve => {
@@ -2682,7 +2713,6 @@ $('#plan-generate').addEventListener('click', async () => {
   }
   const profile = $('#plan-mode').value;
   const speedKmh = parseFloat($('#plan-speed').value) || undefined;
-  clearPickPins();
   closeSheet();
   await dwSimulate(fromLat, fromLng, toLat, toLng, { profile, speedKmh });
 });
@@ -2804,13 +2834,25 @@ async function runDemoFromBakedRoute() {
   state.loadedDay = day;
   refreshUI();
   refreshMapForDay(day);
+
+  // Draggable A/B pins — drag B to re-route
+  const startCoord = points[0];
+  const endCoord = points[points.length - 1];
+  dropPickPin('from', startCoord.lng, startCoord.lat, true);
+  dropPickPin('to', endCoord.lng, endCoord.lat, true);
+  state.planEndpoints = {
+    from: { lat: startCoord.lat, lng: startCoord.lng },
+    to: { lat: endCoord.lat, lng: endCoord.lng },
+    profile: 'foot', speedKmh: 5
+  };
+
   setTimeout(() => {
     if (!state.mapReady) return;
     const bounds = points.reduce((b, p) => b.extend([p.lng, p.lat]),
       new maplibregl.LngLatBounds([points[0].lng, points[0].lat], [points[0].lng, points[0].lat]));
     state.map.fitBounds(bounds, { padding: 80, pitch: 45, bearing: 0, duration: 1000 });
   }, 600);
-  toast(`Demo: ${formatDistance(DEMO_ROUTE_DIST_M)} ${unitLabel()} along real roads · tap ▶️ to replay`, { up: true, duration: 4500 });
+  toast(`Drag 🟢A or 🔴B to re-route · tap ▶️ to replay`, { up: true, duration: 4500 });
 }
 
 // ---------- Simulation (testing) ----------
@@ -3075,6 +3117,19 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
   state.loadedDay = day;
   refreshUI();
   refreshMapForDay(day);
+
+  // Draggable A/B endpoint pins — drag to re-route
+  const startCoord = points[0];
+  const endCoord = points[points.length - 1];
+  dropPickPin('from', startCoord.lng, startCoord.lat, true);
+  dropPickPin('to', endCoord.lng, endCoord.lat, true);
+  state.planEndpoints = {
+    from: { lat: startCoord.lat, lng: startCoord.lng },
+    to: { lat: endCoord.lat, lng: endCoord.lng },
+    profile,
+    speedKmh: opts.speedKmh ?? (profile === 'driving' ? 30 : profile === 'bike' ? 15 : 5)
+  };
+
   // Frame the whole route
   setTimeout(() => {
     if (!state.mapReady) return;
@@ -3082,7 +3137,7 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
       new maplibregl.LngLatBounds([points[0].lng, points[0].lat], [points[0].lng, points[0].lat]));
     state.map.fitBounds(bounds, { padding: 80, pitch: 45, bearing: 0, duration: 1000 });
   }, 600);
-  toast(`Simulated ${formatDistance(day.stats.distanceM)} ${unitLabel()} · tap ▶️ to replay`, { up: true, duration: 4500 });
+  toast(`Drag 🟢A or 🔴B to re-route · tap ▶️ to replay`, { up: true, duration: 4500 });
   } catch (err) {
     console.error('dwSimulate error:', err);
     toast('Generate failed: ' + (err?.message || err), { up: true, duration: 5000 });
