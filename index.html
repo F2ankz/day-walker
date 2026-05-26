@@ -616,6 +616,60 @@
   }
   .empty-state .ico { font-size: 36px; margin-bottom: 12px; }
 
+  /* Waypoint list (in day detail sheet) */
+  .wp-list-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-mute);
+    font-size: 13px;
+    background: var(--bg-3);
+    border-radius: 12px;
+  }
+  .wp-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-3);
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .wp-item:active { transform: scale(0.99); }
+  .wp-item .thumb {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--terracotta);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+    font-size: 18px;
+    border: 2px solid var(--sand);
+  }
+  .wp-item .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .wp-item .info { flex: 1; min-width: 0; }
+  .wp-item .name { font-family: 'Fraunces', serif; font-size: 15px; color: var(--sand); font-weight: 500; line-height: 1.2; }
+  .wp-item .meta { font-size: 11px; color: var(--text-mute); margin-top: 3px; }
+  .wp-item .meta span { margin-right: 8px; }
+  .wp-item .note { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
+  .wp-item .wp-del {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: transparent; border: 1px solid var(--line-2); color: var(--text-mute);
+    cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .wp-item .wp-del:active { background: var(--danger); color: white; border-color: var(--danger); }
+
+  .stats-card .stat.clickable {
+    cursor: pointer;
+    border-radius: 8px;
+    margin: -4px;
+    padding: 4px;
+    transition: background .15s;
+  }
+  .stats-card .stat.clickable:active { background: var(--bg-3); }
+
   /* Capture btn position */
   .capture-fab {
     position: absolute;
@@ -660,7 +714,7 @@
 
   <div class="stats-card" id="stats-card">
     <div class="stat"><div class="v" id="stat-distance">0.0</div><div class="l">km today</div></div>
-    <div class="stat"><div class="v" id="stat-waypoints">0</div><div class="l">places</div></div>
+    <div class="stat clickable" id="stat-waypoints-tile"><div class="v" id="stat-waypoints">0</div><div class="l">places</div></div>
     <div class="stat"><div class="v" id="stat-duration">0m</div><div class="l">time</div></div>
   </div>
 
@@ -835,6 +889,8 @@
   </div>
   <button class="btn-block primary" id="dd-replay">▶️ Replay this journey</button>
   <button class="btn-block" id="dd-load">Show on map</button>
+  <h3>Waypoints <span id="dd-wp-count" style="color:var(--text-mute); font-weight:400;"></span></h3>
+  <div id="dd-wp-list"></div>
   <h3>Export</h3>
   <div class="row">
     <button class="btn-block" id="dd-json">Copy JSON</button>
@@ -1224,12 +1280,27 @@ const SAT_STYLE = {
       }
     },
 
-    // POI dots — coloured by category
+    // POI dots — coloured by category. Rank-based filter so prominent places
+    // (malls, hospitals, landmarks) appear early while obscure POIs only show when zoomed in.
     { id: 'poi-dot', source: 'openmaptiles', 'source-layer': 'poi',
-      type: 'circle', minzoom: 14,
-      filter: ['all', ['has', 'name'], ['<=', ['get', 'rank'], 25]],
+      type: 'circle', minzoom: 10,
+      filter: ['all',
+        ['has', 'name'],
+        ['<=', ['get', 'rank'],
+          ['step', ['zoom'],
+            0,
+            10, 1,
+            11, 2,
+            12, 4,
+            13, 8,
+            14, 15,
+            15, 25,
+            16, 60
+          ]
+        ]
+      ],
       paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 2, 18, 4],
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 1.5, 14, 2.5, 18, 4.5],
         'circle-color': [
           'match', ['get', 'class'],
           'restaurant', '#ef6b5b',
@@ -1280,14 +1351,26 @@ const SAT_STYLE = {
       }
     },
 
-    // POI text labels
+    // POI text labels — same rank logic, kicks in 1-2 zoom levels after the dots
     { id: 'poi-label', source: 'openmaptiles', 'source-layer': 'poi',
-      type: 'symbol', minzoom: 15,
-      filter: ['all', ['has', 'name'], ['<=', ['get', 'rank'], 20]],
+      type: 'symbol', minzoom: 12,
+      filter: ['all',
+        ['has', 'name'],
+        ['<=', ['get', 'rank'],
+          ['step', ['zoom'],
+            0,
+            12, 2,
+            13, 5,
+            14, 10,
+            15, 20,
+            16, 50
+          ]
+        ]
+      ],
       layout: {
         'text-field': ['coalesce', ['get', 'name:th'], ['get', 'name:en'], ['get', 'name']],
         'text-font': ['Noto Sans Regular'],
-        'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10, 18, 12.5],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 12, 9.5, 15, 11, 18, 12.5],
         'text-anchor': 'top',
         'text-offset': [0, 0.7],
         'text-max-width': 8,
@@ -2191,7 +2274,81 @@ async function showDayDetail(id) {
   $('#dd-waypoints').textContent = d.waypoints.length;
   $('#dd-duration').textContent = formatDuration(d.stats.durationS * 1000);
   $('#dd-gist').style.display = state.settings.githubToken ? 'block' : 'none';
+  renderWaypointList(d);
   openSheet('sheet-day-detail');
+}
+
+function renderWaypointList(day) {
+  const list = $('#dd-wp-list');
+  $('#dd-wp-count').textContent = `(${day.waypoints.length})`;
+  if (!day.waypoints.length) {
+    list.innerHTML = '<div class="wp-list-empty">No waypoints yet — tap 📍 while tracking to save a place</div>';
+    return;
+  }
+  // Compute cumulative distance to each waypoint along the path
+  const wpDists = day.waypoints.map(wp => {
+    // Find nearest point in track to this waypoint
+    let bestIdx = 0, bestD = Infinity;
+    for (let i = 0; i < day.points.length; i++) {
+      const d = haversine(day.points[i].lat, day.points[i].lng, wp.lat, wp.lng);
+      if (d < bestD) { bestD = d; bestIdx = i; }
+    }
+    // Accumulate distance up to that idx
+    let acc = 0;
+    for (let i = 1; i <= bestIdx; i++) {
+      acc += haversine(day.points[i-1].lat, day.points[i-1].lng, day.points[i].lat, day.points[i].lng);
+    }
+    return acc;
+  });
+  list.innerHTML = '';
+  const sorted = day.waypoints.map((wp, i) => ({ wp, distM: wpDists[i] })).sort((a, b) => a.wp.ts - b.wp.ts);
+  sorted.forEach(({ wp, distM }, i) => {
+    const item = document.createElement('div');
+    item.className = 'wp-item';
+    item.innerHTML = `
+      <div class="thumb">${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="">` : '📍'}</div>
+      <div class="info">
+        <div class="name">${escapeHtml(wp.name || 'Untitled')}</div>
+        <div class="meta">
+          <span>🕐 ${formatClock(wp.ts)}</span>
+          <span>📏 ${formatDistance(distM)} ${unitLabel()}</span>
+        </div>
+        ${wp.note ? `<div class="note">${escapeHtml(wp.note)}</div>` : ''}
+      </div>
+      <button class="wp-del" title="Delete">×</button>
+    `;
+    item.addEventListener('click', async e => {
+      if (e.target.closest('.wp-del')) return;
+      // Jump to waypoint location on map
+      closeSheet();
+      state.map.flyTo({ center: [wp.lng, wp.lat], zoom: 17, duration: 800 });
+      // Open popup if there's a marker for it
+      setTimeout(() => {
+        const m = state.liveMarkers.find(mk => {
+          const ll = mk.getLngLat();
+          return Math.abs(ll.lat - wp.lat) < 1e-6 && Math.abs(ll.lng - wp.lng) < 1e-6;
+        });
+        if (m && m.getPopup()) m.togglePopup();
+      }, 900);
+    });
+    item.querySelector('.wp-del').addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${wp.name || 'Untitled'}"?`)) return;
+      const fresh = await db.get('days', detailDayId);
+      if (!fresh) return;
+      fresh.waypoints = fresh.waypoints.filter(w => w.id !== wp.id);
+      await db.put('days', fresh);
+      if (state.loadedDay && state.loadedDay.id === detailDayId) {
+        state.loadedDay = fresh;
+        refreshMapForDay(fresh);
+        refreshUI();
+      }
+      renderWaypointList(fresh);
+      $('#dd-waypoints').textContent = fresh.waypoints.length;
+      toast('Waypoint deleted');
+    });
+    list.appendChild(item);
+  });
 }
 
 $('#dd-replay').addEventListener('click', async () => {
@@ -2343,6 +2500,9 @@ $('#btn-replay').addEventListener('click', () => {
   if (state.loadedDay) startReplay(state.loadedDay);
 });
 $('#btn-days').addEventListener('click', showDaysList);
+$('#stat-waypoints-tile').addEventListener('click', () => {
+  if (state.loadedDay) showDayDetail(state.loadedDay.id);
+});
 $('#btn-settings').addEventListener('click', openSettings);
 // ---------- Plan custom journey ----------
 const pickPins = { from: null, to: null };
