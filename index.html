@@ -207,25 +207,18 @@
   #replay-overlay.active { display: block; }
   #replay-overlay > * { pointer-events: auto; }
 
-  .replay-top {
-    position: absolute;
-    top: max(env(safe-area-inset-top), 14px);
-    left: 14px; right: 14px;
-    display: flex; justify-content: space-between; gap: 10px;
-    transition: opacity .4s;
+  /* Replay HUD inside the bottom panel (above the progress bar) */
+  .rp-stats {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 0 4px;
   }
-  .replay-pill {
-    background: var(--surface);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 10px 14px;
-    font-size: 13px;
-    line-height: 1.3;
-  }
-  .replay-pill .small { font-size: 10px; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.5px; }
-  .replay-pill .big { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 600; color: var(--sand); }
+  .rp-stat .l { font-size: 10px; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.6px; }
+  .rp-stat .v { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 600; color: var(--sand); line-height: 1.1; margin-top: 2px; }
+  .rp-stat .sub { font-size: 12px; color: var(--text-mute); font-family: 'Inter Tight', sans-serif; font-weight: 500; }
+  .rp-stat.right { text-align: right; }
 
   .replay-bottom {
     position: absolute;
@@ -331,7 +324,6 @@
     transform: scale(1.05);
   }
 
-  .replay-fade .replay-top,
   .replay-fade .replay-bottom,
   .replay-fade .view-modes { opacity: 0.15; }
 
@@ -636,7 +628,6 @@
     .stats-card { left: 14px; right: auto; width: 320px; }
     .bottombar { left: auto; right: 0; max-width: 420px; }
     .replay-bottom { left: 50%; transform: translateX(-50%); max-width: 520px; }
-    .replay-top { left: 50%; transform: translateX(-50%); max-width: 520px; }
   }
 </style>
 </head>
@@ -683,17 +674,6 @@
   </div>
 
   <div id="replay-overlay">
-    <div class="replay-top">
-      <div class="replay-pill">
-        <div class="small">Trip time</div>
-        <div class="big" id="rp-time">--:--</div>
-      </div>
-      <div class="replay-pill" style="text-align:right;">
-        <div class="small">Distance</div>
-        <div class="big"><span id="rp-dist">0.0</span> <span style="font-size:12px; color:var(--text-mute);">/ <span id="rp-dist-total">0.0</span> km</span></div>
-      </div>
-    </div>
-
     <div class="view-modes" id="view-modes">
       <button data-mode="walker" class="active" title="Walker (first-person)">🚶</button>
       <button data-mode="follow" title="Lock follow — keeps your angle">🎯</button>
@@ -707,6 +687,16 @@
     </button>
 
     <div class="replay-bottom">
+      <div class="rp-stats">
+        <div class="rp-stat">
+          <div class="l">Trip time</div>
+          <div class="v" id="rp-time">--:--</div>
+        </div>
+        <div class="rp-stat right">
+          <div class="l">Distance</div>
+          <div class="v"><span id="rp-dist">0.0</span> <span class="sub">/ <span id="rp-dist-total">0.0</span> <span id="rp-unit">km</span></span></div>
+        </div>
+      </div>
       <div class="replay-progress" id="rp-progress">
         <div class="track"></div>
         <div class="fill" id="rp-fill"></div>
@@ -778,10 +768,18 @@
       <label>Default view</label>
       <select id="set-view">
         <option value="walker">Walker 🚶</option>
+        <option value="follow">Lock follow 🎯</option>
         <option value="drone">Drone 🚁</option>
         <option value="top">Top-down 🗺️</option>
       </select>
     </div>
+  </div>
+  <div class="field">
+    <label>Default map</label>
+    <select id="set-basemap">
+      <option value="satellite">Satellite 🛰️</option>
+      <option value="street">Street 🗺️</option>
+    </select>
   </div>
   <h3>Optional</h3>
   <div class="field">
@@ -939,7 +937,8 @@ const state = {
     minDistance: 5,
     accuracyMax: 50,
     defaultSpeed: 50,
-    defaultView: 'walker',
+    defaultView: 'drone',
+    defaultBasemap: 'satellite',
     githubToken: ''
   },
   replay: {
@@ -1193,10 +1192,10 @@ function addCustomLayers() {
 }
 
 function initMap(center = [100.5018, 13.7563]) {
-  state.basemap = 'street';
+  state.basemap = state.settings.defaultBasemap || 'satellite';
   state.map = new maplibregl.Map({
     container: 'map',
-    style: STREET_STYLE_URL,
+    style: state.basemap === 'satellite' ? SAT_STYLE : STREET_STYLE_URL,
     center, zoom: 14, pitch: 45, bearing: 0,
     antialias: true, maxPitch: 85,
     attributionControl: { compact: true }
@@ -1673,6 +1672,7 @@ function startReplay(day) {
   $('#replay-overlay').classList.add('active');
   $('#rp-speed').textContent = state.replay.speed + 'x';
   $('#rp-dist-total').textContent = formatDistance(day.stats.distanceM);
+  $('#rp-unit').textContent = unitLabel();
   $$('#view-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === state.replay.viewMode));
 
   // Stash a "replay clone" of waypoints — keep existing ones
@@ -2147,6 +2147,7 @@ function openSettings() {
   $('#set-acc').value = state.settings.accuracyMax;
   $('#set-speed').value = state.settings.defaultSpeed;
   $('#set-view').value = state.settings.defaultView;
+  $('#set-basemap').value = state.settings.defaultBasemap || 'satellite';
   $('#set-token').value = state.settings.githubToken;
   openSheet('sheet-settings');
 }
@@ -2158,6 +2159,13 @@ $('#set-save').addEventListener('click', async () => {
   await saveSetting('accuracyMax', Math.max(5, Number($('#set-acc').value)));
   await saveSetting('defaultSpeed', Number($('#set-speed').value));
   await saveSetting('defaultView', $('#set-view').value);
+  const newBasemap = $('#set-basemap').value;
+  if (newBasemap !== state.settings.defaultBasemap) {
+    await saveSetting('defaultBasemap', newBasemap);
+    if (state.basemap !== newBasemap) switchBasemap(newBasemap);
+  } else {
+    await saveSetting('defaultBasemap', newBasemap);
+  }
   await saveSetting('githubToken', $('#set-token').value.trim());
   refreshUI();
   closeSheet();
