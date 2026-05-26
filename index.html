@@ -1132,31 +1132,32 @@ const SAT_STYLE = {
 
 function addCustomLayers() {
   const m = state.map;
-  // 3D buildings — needs openmaptiles vector source (present in both styles)
+  // 3D buildings — only in street mode. Satellite already shows buildings in the imagery.
   try {
-    const layers = m.getStyle().layers;
-    let labelLayerId;
-    for (const l of layers) {
-      if (l.type === 'symbol' && l.layout && l.layout['text-field']) { labelLayerId = l.id; break; }
-    }
-    if (m.getSource('openmaptiles') && !m.getLayer('3d-buildings')) {
-      m.addLayer({
-        id: '3d-buildings',
-        source: 'openmaptiles',
-        'source-layer': 'building',
-        type: 'fill-extrusion',
-        minzoom: 14,
-        paint: {
-          'fill-extrusion-color': state.basemap === 'satellite'
-            ? ['interpolate', ['linear'], ['get', 'render_height'],
-                0, '#646d76', 30, '#7a838c', 100, '#a0a8b0', 300, '#cdd2d6']
-            : ['interpolate', ['linear'], ['get', 'render_height'],
+    if (state.basemap !== 'satellite') {
+      const layers = m.getStyle().layers;
+      let labelLayerId;
+      for (const l of layers) {
+        if (l.type === 'symbol' && l.layout && l.layout['text-field']) { labelLayerId = l.id; break; }
+      }
+      if (m.getSource('openmaptiles') && !m.getLayer('3d-buildings')) {
+        m.addLayer({
+          id: '3d-buildings',
+          source: 'openmaptiles',
+          'source-layer': 'building',
+          type: 'fill-extrusion',
+          minzoom: 14,
+          paint: {
+            'fill-extrusion-color': ['interpolate', ['linear'], ['get', 'render_height'],
                 0, '#2a3138', 30, '#3a434b', 100, '#525d66', 300, '#7a8590'],
-          'fill-extrusion-height': ['get', 'render_height'],
-          'fill-extrusion-base': ['get', 'render_min_height'],
-          'fill-extrusion-opacity': state.basemap === 'satellite' ? 0.78 : 0.92
-        }
-      }, labelLayerId);
+            'fill-extrusion-height': ['get', 'render_height'],
+            'fill-extrusion-base': ['get', 'render_min_height'],
+            'fill-extrusion-opacity': 0.92
+          }
+        }, labelLayerId);
+      }
+    } else if (m.getLayer('3d-buildings')) {
+      m.removeLayer('3d-buildings');
     }
   } catch (e) { console.warn('3D buildings layer skipped', e); }
 
@@ -2528,7 +2529,7 @@ async function fetchWalkingRoute(fromLat, fromLng, toLat, toLng, profile = 'foot
     const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
     console.log('[routing] OSRM →', url);
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const timer = setTimeout(() => ctrl.abort(), 60000);
     const res = await fetch(url, { mode: 'cors', signal: ctrl.signal });
     clearTimeout(timer);
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2551,7 +2552,7 @@ async function fetchWalkingRoute(fromLat, fromLng, toLat, toLng, profile = 'foot
     const url = 'https://valhalla1.openstreetmap.de/route';
     console.log('[routing] Valhalla →', url);
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const timer = setTimeout(() => ctrl.abort(), 60000);
     const res = await fetch(url, {
       method: 'POST', mode: 'cors',
       headers: { 'Content-Type': 'application/json' },
@@ -2670,10 +2671,10 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
   const { id, date } = todayId();
   const endTs = Date.now();
 
-  // Pre-check straight-line distance — public OSRM rejects extreme routes
+  // Pre-check straight-line distance — public routers have soft limits
   const directKm = haversine(fromLat, fromLng, toLat, toLng) / 1000;
-  if (directKm > 300) {
-    toast(`Distance too large (${directKm.toFixed(0)} km) — public router rejects > 300km`, { up: true, duration: 4500 });
+  if (directKm > 2000) {
+    toast(`Distance too large (${directKm.toFixed(0)} km) — limit is 2000 km`, { up: true, duration: 4500 });
     return;
   }
 
@@ -2681,23 +2682,34 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
   const route = await fetchWalkingRoute(fromLat, fromLng, toLat, toLng, profile);
   let coords, totalDistM;
   if (route && route.coords && route.coords.length >= 2) {
-    // Adaptive smoothing — fewer passes for huge routes so we don't blow up the point count.
-    // Each Chaikin pass roughly doubles points; 4 passes = 16x.
-    const n = route.coords.length;
-    const passes = n > 4000 ? 1 : n > 1500 ? 2 : n > 500 ? 3 : 4;
-    const simplified = rdpSimplify(route.coords, 12);
+    // Estimate route length to pick densify step + smoothing passes
+    let rawDistM = 0;
+    for (let i = 1; i < route.coords.length; i++) {
+      rawDistM += haversine(route.coords[i-1].lat, route.coords[i-1].lng, route.coords[i].lat, route.coords[i].lng);
+    }
+    const rawKm = rawDistM / 1000;
+    // Adaptive resolution — keep total point count under ~12k for replay performance
+    let densifyStep, passes, rdpEps;
+    if (rawKm < 5)       { densifyStep = 4;   passes = 4; rdpEps = 10; }
+    else if (rawKm < 30) { densifyStep = 8;   passes = 3; rdpEps = 15; }
+    else if (rawKm < 100){ densifyStep = 25;  passes = 2; rdpEps = 30; }
+    else if (rawKm < 300){ densifyStep = 60;  passes = 2; rdpEps = 60; }
+    else if (rawKm < 700){ densifyStep = 120; passes = 1; rdpEps = 120; }
+    else                 { densifyStep = 250; passes = 1; rdpEps = 200; }
+
+    const simplified = rdpSimplify(route.coords, rdpEps);
     const smoothed = chaikinSmooth(simplified, passes);
-    coords = densifyRoute(smoothed, 4);
-    // Hard cap so an enormous route doesn't choke the device or IndexedDB
-    if (coords.length > 20000) {
-      const stride = Math.ceil(coords.length / 20000);
+    coords = densifyRoute(smoothed, densifyStep);
+    // Hard safety cap
+    if (coords.length > 15000) {
+      const stride = Math.ceil(coords.length / 15000);
       coords = coords.filter((_, i) => i % stride === 0 || i === coords.length - 1);
     }
     totalDistM = 0;
     for (let i = 1; i < coords.length; i++) {
       totalDistM += haversine(coords[i-1].lat, coords[i-1].lng, coords[i].lat, coords[i].lng);
     }
-    console.log('[dwSimulate]', { profile, raw: n, simplified: simplified.length, final: coords.length, distM: totalDistM });
+    console.log('[dwSimulate]', { profile, rawKm: rawKm.toFixed(1), step: densifyStep, passes, raw: route.coords.length, final: coords.length });
     toast(`Route: ${formatDistance(totalDistM)} ${unitLabel()} · ${coords.length} pts`, { up: true, duration: 2500 });
   } else {
     coords = densifyRoute([{lat: fromLat, lng: fromLng}, {lat: toLat, lng: toLng}], 6);
