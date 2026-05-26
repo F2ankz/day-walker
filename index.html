@@ -549,6 +549,20 @@
   .wp-popup-content .n { font-weight: 600; font-size: 14px; color: var(--sand); }
   .wp-popup-content .t { font-size: 11px; color: var(--text-mute); margin-top: 2px; }
   .wp-popup-content img { width: 200px; max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
+  .wp-popup-edit {
+    margin-top: 8px;
+    background: var(--terracotta);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    width: 100%;
+  }
+  .wp-popup-edit:active { transform: scale(0.97); }
 
   .maplibregl-popup-content {
     background: var(--bg-2) !important;
@@ -677,12 +691,15 @@
   .wp-item .meta { font-size: 11px; color: var(--text-mute); margin-top: 3px; }
   .wp-item .meta span { margin-right: 8px; }
   .wp-item .note { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
-  .wp-item .wp-del {
+  .wp-item .wp-edit, .wp-item .wp-del {
     width: 28px; height: 28px; border-radius: 50%;
     background: transparent; border: 1px solid var(--line-2); color: var(--text-mute);
     cursor: pointer; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    padding: 0;
   }
+  .wp-item .wp-edit:active { background: var(--teal); color: white; border-color: var(--teal); }
   .wp-item .wp-del:active { background: var(--danger); color: white; border-color: var(--danger); }
 
   .stats-card .stat.clickable {
@@ -1510,6 +1527,7 @@ function clearWaypointMarkers(target = state.liveMarkers) {
 function addWaypointMarker(wp, list = state.liveMarkers) {
   const el = document.createElement('div');
   el.className = 'wp-marker' + (wp.photoBase64 ? ' has-photo' : '');
+  el.style.cursor = 'grab';
   if (wp.photoBase64) {
     const img = document.createElement('img');
     img.src = wp.photoBase64;
@@ -1517,18 +1535,43 @@ function addWaypointMarker(wp, list = state.liveMarkers) {
   } else {
     el.textContent = '📍';
   }
-  const popup = new maplibregl.Popup({ offset: 24, closeButton: true, maxWidth: '260px' })
-    .setHTML(`
-      <div class="wp-popup-content">
-        <div class="n">${escapeHtml(wp.name || 'Untitled')}</div>
-        <div class="t">${formatClock(wp.ts)}${wp.note ? ' · ' + escapeHtml(wp.note) : ''}</div>
-        ${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="" />` : ''}
-      </div>
-    `);
-  const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+  const popupHtml = `
+    <div class="wp-popup-content">
+      <div class="n">${escapeHtml(wp.name || 'Untitled')}</div>
+      <div class="t">${formatClock(wp.ts)}${wp.note ? ' · ' + escapeHtml(wp.note) : ''}</div>
+      ${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="" />` : ''}
+      <button class="wp-popup-edit" data-wp-id="${wp.id}">✏️ Edit</button>
+    </div>
+  `;
+  const popup = new maplibregl.Popup({ offset: 24, closeButton: true, maxWidth: '260px' }).setHTML(popupHtml);
+  const marker = new maplibregl.Marker({ element: el, anchor: 'center', draggable: true })
     .setLngLat([wp.lng, wp.lat])
     .setPopup(popup)
     .addTo(state.map);
+  marker.on('dragstart', () => { el.style.cursor = 'grabbing'; });
+  marker.on('dragend', async () => {
+    el.style.cursor = 'grab';
+    const ll = marker.getLngLat();
+    const dayId = state.loadedDay?.id;
+    if (!dayId) return;
+    const fresh = await db.get('days', dayId);
+    if (!fresh) return;
+    const idx = fresh.waypoints.findIndex(w => w.id === wp.id);
+    if (idx < 0) return;
+    fresh.waypoints[idx].lat = ll.lat;
+    fresh.waypoints[idx].lng = ll.lng;
+    await db.put('days', fresh);
+    state.loadedDay = fresh;
+    if (state.currentDay && state.currentDay.id === dayId) state.currentDay = fresh;
+    refreshUI();
+    if (activeSheet && activeSheet.id === 'sheet-day-detail') renderWaypointList(fresh);
+    toast(`Moved "${fresh.waypoints[idx].name || 'waypoint'}"`);
+  });
+  // Wire the Edit button inside the popup once it opens
+  popup.on('open', () => {
+    const btn = document.querySelector(`.wp-popup-edit[data-wp-id="${wp.id}"]`);
+    if (btn) btn.addEventListener('click', () => { popup.remove(); openEditWaypoint(wp.id); });
+  });
   list.push(marker);
   return marker;
 }
@@ -1701,6 +1744,27 @@ function handlePosition(pos) {
 
 // ---------- Waypoints ----------
 let pendingPhotoBase64 = null;
+let editingWaypointId = null;     // null = creating new; string = editing this one
+
+async function openEditWaypoint(wpId) {
+  const dayId = state.loadedDay?.id;
+  if (!dayId) return;
+  const fresh = await db.get('days', dayId);
+  if (!fresh) return;
+  const wp = fresh.waypoints.find(w => w.id === wpId);
+  if (!wp) return;
+  editingWaypointId = wpId;
+  pendingPhotoBase64 = wp.photoBase64 || null;
+  $('#wp-name').value = wp.name || '';
+  $('#wp-note').value = wp.note || '';
+  $('#wp-photo-preview').innerHTML = wp.photoBase64
+    ? `<img src="${wp.photoBase64}" alt="" />`
+    : '<div>📷 Tap to add photo</div>';
+  $('#sheet-waypoint h2').textContent = 'Edit place';
+  $('#wp-save').textContent = 'Save changes';
+  openSheet('sheet-waypoint');
+}
+
 function openWaypointSheet() {
   if (!state.lastPoint && state.currentDay?.points.length === 0) {
     // try to get current position
@@ -1722,16 +1786,45 @@ function openWaypointSheet() {
   _openWP();
 }
 function _openWP() {
+  editingWaypointId = null;
   pendingPhotoBase64 = null;
   $('#wp-name').value = '';
   $('#wp-note').value = '';
   $('#wp-photo-preview').innerHTML = '<div>📷 Tap to add photo</div>';
+  $('#sheet-waypoint h2').textContent = 'Mark this place';
+  $('#wp-save').textContent = 'Save waypoint';
   openSheet('sheet-waypoint');
 }
 
 async function saveWaypoint() {
   const name = $('#wp-name').value.trim() || 'Untitled';
   const note = $('#wp-note').value.trim();
+
+  // EDIT mode — update existing waypoint
+  if (editingWaypointId) {
+    const dayId = state.loadedDay?.id;
+    const fresh = await db.get('days', dayId);
+    if (!fresh) { closeSheet(); return; }
+    const idx = fresh.waypoints.findIndex(w => w.id === editingWaypointId);
+    if (idx >= 0) {
+      fresh.waypoints[idx].name = name;
+      fresh.waypoints[idx].note = note;
+      fresh.waypoints[idx].photoBase64 = pendingPhotoBase64 || null;
+      await db.put('days', fresh);
+      state.loadedDay = fresh;
+      if (state.currentDay && state.currentDay.id === dayId) state.currentDay = fresh;
+      refreshMapForDay(fresh);  // rebuild markers so photo / popup updates
+      refreshUI();
+      // Re-render list if day-detail sheet still open
+      if (activeSheet && activeSheet.id === 'sheet-day-detail') renderWaypointList(fresh);
+    }
+    editingWaypointId = null;
+    closeSheet();
+    toast(`Updated: ${name}`);
+    return;
+  }
+
+  // CREATE mode
   let pt = state.lastPoint || state.currentDay?.points.at(-1);
   if (!pt) {
     toast('No location yet');
@@ -2308,10 +2401,13 @@ function renderWaypointList(day) {
         </div>
         ${wp.note ? `<div class="note">${escapeHtml(wp.note)}</div>` : ''}
       </div>
-      <button class="wp-del" title="Delete">×</button>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <button class="wp-edit" title="Edit">✏️</button>
+        <button class="wp-del" title="Delete">×</button>
+      </div>
     `;
     item.addEventListener('click', async e => {
-      if (e.target.closest('.wp-del')) return;
+      if (e.target.closest('.wp-del') || e.target.closest('.wp-edit')) return;
       // Jump to waypoint location on map
       closeSheet();
       state.map.flyTo({ center: [wp.lng, wp.lat], zoom: 17, duration: 800 });
@@ -2323,6 +2419,12 @@ function renderWaypointList(day) {
         });
         if (m && m.getPopup()) m.togglePopup();
       }, 900);
+    });
+    item.querySelector('.wp-edit').addEventListener('click', async e => {
+      e.stopPropagation();
+      closeSheet();
+      // Wait briefly so the sheet animation finishes before opening the edit sheet
+      setTimeout(() => openEditWaypoint(wp.id), 280);
     });
     item.querySelector('.wp-del').addEventListener('click', async e => {
       e.stopPropagation();
