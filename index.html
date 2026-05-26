@@ -1766,24 +1766,38 @@ async function openEditWaypoint(wpId) {
 }
 
 function openWaypointSheet() {
-  if (!state.lastPoint && state.currentDay?.points.length === 0) {
-    // try to get current position
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          state.lastPoint = {
-            lat: pos.coords.latitude, lng: pos.coords.longitude,
-            ts: Date.now(), acc: pos.coords.accuracy
-          };
-          _openWP();
-        },
-        () => toast('Need GPS to mark waypoint'),
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-      return;
-    }
+  // While tracking, reuse the latest GPS sample if it's fresh enough (< 8s).
+  if (state.tracking && state.lastPoint && (Date.now() - state.lastPoint.ts < 8000)) {
+    _openWP();
+    return;
   }
-  _openWP();
+  if (!('geolocation' in navigator)) {
+    toast('Geolocation not available');
+    return;
+  }
+  toast('📡 Getting your location…', { up: true, duration: 3000 });
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      state.lastPoint = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        ts: Date.now(),
+        acc: pos.coords.accuracy
+      };
+      // Gently centre the map on the user's location so the sheet feels contextual
+      if (state.map && !state.replay.active) {
+        state.map.easeTo({ center: [state.lastPoint.lng, state.lastPoint.lat], zoom: Math.max(state.map.getZoom(), 16), duration: 700 });
+      }
+      _openWP();
+    },
+    err => {
+      const msg = err.code === 1 ? 'Permission denied — enable location in browser settings'
+                : err.code === 2 ? 'GPS unavailable — try again outdoors'
+                : err.code === 3 ? 'GPS timed out — try again' : (err.message || 'GPS failed');
+      toast(msg, { up: true, duration: 4500 });
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
 }
 function _openWP() {
   editingWaypointId = null;
@@ -1843,7 +1857,8 @@ async function saveWaypoint() {
   addWaypointMarker(wp);
   refreshUI();
   closeSheet();
-  toast(`Saved: ${name}`);
+  const count = state.currentDay.waypoints.length;
+  toast(`✓ Saved "${name}" · ${count} saved today · tap "places" to view list`, { duration: 4000 });
 }
 
 async function compressImage(file) {
