@@ -157,9 +157,33 @@
 
   .main-actions {
     display: grid;
-    grid-template-columns: 1fr 56px 56px;
+    grid-template-columns: 1fr 56px;
     gap: 8px;
   }
+
+  /* Mark Waypoint floating button — left-center of screen */
+  .fab-waypoint {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--line-2);
+    color: var(--terracotta-2);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    z-index: 28;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+    transition: transform .15s;
+  }
+  .fab-waypoint:active { transform: translateY(-50%) scale(0.92); }
+  .fab-waypoint svg { width: 24px; height: 24px; }
+  /* Hide it while replay is on — no point marking during playback */
+  body.replay-active .fab-waypoint { display: none; }
   .btn {
     border: none;
     border-radius: 999px;
@@ -670,23 +694,6 @@
   }
   .stats-card .stat.clickable:active { background: var(--bg-3); }
 
-  /* Capture btn position */
-  .capture-fab {
-    position: absolute;
-    left: 14px;
-    bottom: 100px;
-    width: 46px; height: 46px;
-    border-radius: 50%;
-    background: var(--surface);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--line);
-    color: var(--text-dim);
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-    z-index: 51;
-    transition: opacity .4s;
-  }
-  .replay-fade .capture-fab { opacity: 0.15; }
 
   @media (min-width: 700px) {
     .stats-card { left: 14px; right: auto; width: 320px; }
@@ -725,14 +732,15 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
         <span id="btn-track-label">Start Day</span>
       </button>
-      <button class="btn btn-square" id="btn-waypoint" title="Mark waypoint">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-      </button>
       <button class="btn btn-square btn-primary replay" id="btn-replay" title="Replay today's journey">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
       </button>
     </div>
   </div>
+
+  <button class="fab-waypoint" id="btn-waypoint" title="Mark waypoint here">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+  </button>
 
   <div id="replay-overlay">
     <div class="view-modes" id="view-modes">
@@ -742,10 +750,6 @@
       <button data-mode="top" title="Bird-eye top-down view"><span class="ico">🗺️</span><span class="lbl">Top</span></button>
       <button data-mode="free" title="Free camera — full control"><span class="ico">🎥</span><span class="lbl">Free</span></button>
     </div>
-
-    <button class="capture-fab" id="btn-capture" title="Capture moment">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-    </button>
 
     <div class="replay-bottom">
       <div class="rp-stats">
@@ -1912,6 +1916,7 @@ function startReplay(day) {
   state.replay.lastFrame = performance.now();
 
   $('#replay-overlay').classList.add('active');
+  document.body.classList.add('replay-active');
   $('#rp-speed').textContent = state.replay.speed + 'x';
   $('#rp-dist-total').textContent = formatDistance(day.stats.distanceM);
   $('#rp-unit').textContent = unitLabel();
@@ -1934,6 +1939,7 @@ function stopReplay() {
   state.replay.rafId = null;
   $('#replay-overlay').classList.remove('active');
   $('#replay-overlay').classList.remove('replay-fade');
+  document.body.classList.remove('replay-active');
   if (state.replay.fadeTimer) clearTimeout(state.replay.fadeTimer);
   removeWalkerMarker();
   // Restore full trail
@@ -2166,22 +2172,6 @@ function bindUserGestureAutoFree() {
   state.map.on('zoomstart',   e => { if (e.originalEvent) switchToFree('zoom'); });
 }
 
-// Capture frame
-$('#btn-capture').addEventListener('click', () => {
-  try {
-    const canvas = state.map.getCanvas();
-    canvas.toBlob(blob => {
-      if (!blob) { toast('Capture failed'); return; }
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `walker-${Date.now()}.png`;
-      a.click();
-      toast('Saved screenshot');
-    }, 'image/png');
-  } catch (e) {
-    toast('Capture failed');
-  }
-});
 
 // Skip ahead with arrow keys
 window.addEventListener('keydown', e => {
