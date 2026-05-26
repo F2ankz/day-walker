@@ -1106,8 +1106,14 @@ function toast(msg, opts={}) {
 }
 
 // ---------- Map ----------
+// Hybrid: Esri satellite imagery + OSM road network overlay.
+// The overlay matters because the trail comes from OSRM (OSM data) — without
+// it, the path can appear to "cut across" satellite imagery due to alignment
+// drift between Esri imagery and OSM. With the overlay, the trail visually
+// hugs the actual OSM road centreline.
 const SAT_STYLE = {
   version: 8,
+  glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
   sources: {
     sat: {
       type: 'raster',
@@ -1116,11 +1122,91 @@ const SAT_STYLE = {
       ],
       tileSize: 256, maxzoom: 19,
       attribution: 'Imagery © Esri'
+    },
+    openmaptiles: {
+      type: 'vector',
+      url: 'https://tiles.openfreemap.org/planet',
+      attribution: '© OpenStreetMap'
     }
   },
   layers: [
     { id: 'bg', type: 'background', paint: { 'background-color': '#0e1418' } },
-    { id: 'sat', type: 'raster', source: 'sat', paint: { 'raster-saturation': -0.1, 'raster-contrast': 0.06 } }
+    { id: 'sat', type: 'raster', source: 'sat',
+      paint: { 'raster-saturation': -0.15, 'raster-contrast': 0.05, 'raster-brightness-max': 0.92 } },
+
+    // Road casing (darker wider line underneath)
+    { id: 'road-casing-major', source: 'openmaptiles', 'source-layer': 'transportation',
+      type: 'line', minzoom: 10,
+      filter: ['in', 'class', 'motorway', 'trunk', 'primary'],
+      paint: {
+        'line-color': 'rgba(0,0,0,0.55)',
+        'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 10, 1.5, 14, 4, 18, 9]
+      }
+    },
+    { id: 'road-casing-minor', source: 'openmaptiles', 'source-layer': 'transportation',
+      type: 'line', minzoom: 13,
+      filter: ['in', 'class', 'secondary', 'tertiary', 'minor', 'service', 'residential'],
+      paint: {
+        'line-color': 'rgba(0,0,0,0.4)',
+        'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 13, 1, 16, 2.5, 18, 5]
+      }
+    },
+
+    // Road fill (warm light tone on top of casing)
+    { id: 'road-fill-major', source: 'openmaptiles', 'source-layer': 'transportation',
+      type: 'line', minzoom: 10,
+      filter: ['in', 'class', 'motorway', 'trunk', 'primary'],
+      paint: {
+        'line-color': 'rgba(255, 234, 196, 0.85)',
+        'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 10, 0.6, 14, 2.5, 18, 6.5]
+      }
+    },
+    { id: 'road-fill-minor', source: 'openmaptiles', 'source-layer': 'transportation',
+      type: 'line', minzoom: 13,
+      filter: ['in', 'class', 'secondary', 'tertiary', 'minor', 'service', 'residential'],
+      paint: {
+        'line-color': 'rgba(245, 230, 200, 0.7)',
+        'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 13, 0.5, 16, 1.6, 18, 3.5]
+      }
+    },
+
+    // Road labels — subtle but readable on satellite
+    { id: 'road-name', source: 'openmaptiles', 'source-layer': 'transportation_name',
+      type: 'symbol', minzoom: 14,
+      filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary'],
+      layout: {
+        'symbol-placement': 'line',
+        'text-field': ['get', 'name'],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 18, 13],
+        'text-letter-spacing': 0.05
+      },
+      paint: {
+        'text-color': '#fff7e8',
+        'text-halo-color': 'rgba(0,0,0,0.85)',
+        'text-halo-width': 1.4,
+        'text-opacity': 0.92
+      }
+    },
+
+    // Place labels (city / town names)
+    { id: 'place-name', source: 'openmaptiles', 'source-layer': 'place',
+      type: 'symbol', minzoom: 6,
+      filter: ['in', 'class', 'city', 'town', 'village', 'suburb', 'neighbourhood'],
+      layout: {
+        'text-field': ['coalesce', ['get', 'name:th'], ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'],
+          6, 11, 10, 13, 14, 15],
+        'text-letter-spacing': 0.04
+      },
+      paint: {
+        'text-color': '#fff',
+        'text-halo-color': 'rgba(0,0,0,0.85)',
+        'text-halo-width': 1.6,
+        'text-opacity': 0.95
+      }
+    }
   ]
 };
 
@@ -2388,11 +2474,8 @@ const DEMO_ROUTE_DIST_M = 3744.9;
 // Build a day directly from a polyline of [lng,lat] pairs — no network call.
 async function runDemoFromBakedRoute() {
   const coordsLL = DEMO_ROUTE.map(([lng, lat]) => ({ lat, lng }));
-  // Light cleanup only — keep on road centerline, let camera EMA absorb jitter
-  const simplified = rdpSimplify(coordsLL, 3);
-  console.log('[demo] raw:', coordsLL.length, '→ simplified:', simplified.length);
-  const smoothed = chaikinSmooth(simplified, 1);
-  const dense = densifyRoute(smoothed, 3);
+  // No smoothing — use OSRM road centreline as-is; densify for replay timing only
+  const dense = densifyRoute(coordsLL, 3);
 
   // Recompute total distance from smoothed path
   let totalDistM = 0;
@@ -2630,20 +2713,17 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
       rawDistM += haversine(route.coords[i-1].lat, route.coords[i-1].lng, route.coords[i].lat, route.coords[i].lng);
     }
     const rawKm = rawDistM / 1000;
-    // Adaptive resolution — tighter to the road. RDP is now very light (only kills
-    // sub-meter wobble) and Chaikin is reduced to 1 pass so corners stay on the road.
-    // Camera smoothing (EMA on bearing) is what handles visual jitter, not path smoothing.
-    let densifyStep, passes, rdpEps;
-    if (rawKm < 5)       { densifyStep = 3;   passes = 1; rdpEps = 2; }
-    else if (rawKm < 30) { densifyStep = 6;   passes = 1; rdpEps = 4; }
-    else if (rawKm < 100){ densifyStep = 20;  passes = 0; rdpEps = 8; }
-    else if (rawKm < 300){ densifyStep = 50;  passes = 0; rdpEps = 20; }
-    else if (rawKm < 700){ densifyStep = 100; passes = 0; rdpEps = 50; }
-    else                 { densifyStep = 200; passes = 0; rdpEps = 100; }
+    // No smoothing — use OSRM road centreline directly so the path hugs the
+    // visible road overlay. Camera EMA handles all visual jitter.
+    let densifyStep;
+    if (rawKm < 5)        densifyStep = 3;
+    else if (rawKm < 30)  densifyStep = 6;
+    else if (rawKm < 100) densifyStep = 20;
+    else if (rawKm < 300) densifyStep = 50;
+    else if (rawKm < 700) densifyStep = 100;
+    else                  densifyStep = 200;
 
-    const simplified = rdpSimplify(route.coords, rdpEps);
-    const smoothed = chaikinSmooth(simplified, passes);
-    coords = densifyRoute(smoothed, densifyStep);
+    coords = densifyRoute(route.coords, densifyStep);
     // Hard safety cap
     if (coords.length > 15000) {
       const stride = Math.ceil(coords.length / 15000);
@@ -2653,7 +2733,7 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
     for (let i = 1; i < coords.length; i++) {
       totalDistM += haversine(coords[i-1].lat, coords[i-1].lng, coords[i].lat, coords[i].lng);
     }
-    console.log('[dwSimulate]', { profile, rawKm: rawKm.toFixed(1), step: densifyStep, passes, raw: route.coords.length, final: coords.length });
+    console.log('[dwSimulate]', { profile, rawKm: rawKm.toFixed(1), step: densifyStep, raw: route.coords.length, final: coords.length });
     toast(`Route: ${formatDistance(totalDistM)} ${unitLabel()} · ${coords.length} pts`, { up: true, duration: 2500 });
   } else {
     coords = densifyRoute([{lat: fromLat, lng: fromLng}, {lat: toLat, lng: toLng}], 6);
