@@ -1189,7 +1189,120 @@ const SAT_STYLE = {
       }
     },
 
-    // Place labels (city / town names)
+    // Water labels (rivers, canals, lakes, sea)
+    { id: 'water-name', source: 'openmaptiles', 'source-layer': 'water_name',
+      type: 'symbol', minzoom: 9,
+      layout: {
+        'text-field': ['coalesce', ['get', 'name:th'], ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 9, 10, 14, 13],
+        'text-letter-spacing': 0.08,
+        'symbol-placement': 'line',
+        'text-max-width': 8
+      },
+      paint: {
+        'text-color': '#7ec4e3',
+        'text-halo-color': 'rgba(0,0,0,0.7)',
+        'text-halo-width': 1.2
+      }
+    },
+
+    // Airport labels
+    { id: 'aerodrome-label', source: 'openmaptiles', 'source-layer': 'aerodrome_label',
+      type: 'symbol', minzoom: 9,
+      layout: {
+        'text-field': ['coalesce', ['get', 'name:th'], ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': 12,
+        'text-letter-spacing': 0.1,
+        'text-transform': 'uppercase'
+      },
+      paint: {
+        'text-color': '#7fdbff',
+        'text-halo-color': 'rgba(0,0,0,0.85)',
+        'text-halo-width': 1.4
+      }
+    },
+
+    // POI dots — coloured by category
+    { id: 'poi-dot', source: 'openmaptiles', 'source-layer': 'poi',
+      type: 'circle', minzoom: 14,
+      filter: ['all', ['has', 'name'], ['<=', ['get', 'rank'], 25]],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 2, 18, 4],
+        'circle-color': [
+          'match', ['get', 'class'],
+          'restaurant', '#ef6b5b',
+          'cafe',       '#ef6b5b',
+          'fast_food',  '#ef6b5b',
+          'bar',        '#ef6b5b',
+          'pub',        '#ef6b5b',
+          'ice_cream',  '#ef6b5b',
+          'shop',            '#b97cd6',
+          'supermarket',     '#b97cd6',
+          'marketplace',     '#b97cd6',
+          'mall',            '#b97cd6',
+          'department_store','#b97cd6',
+          'convenience',     '#b97cd6',
+          'clothing_store',  '#b97cd6',
+          'hospital', '#e89060',
+          'doctors',  '#e89060',
+          'clinic',   '#e89060',
+          'pharmacy', '#e89060',
+          'dentist',  '#e89060',
+          'school',       '#5ba3e0',
+          'college',      '#5ba3e0',
+          'university',   '#5ba3e0',
+          'kindergarten', '#5ba3e0',
+          'library',      '#5ba3e0',
+          'bus',     '#5dd28b',
+          'railway', '#5dd28b',
+          'aerodrome','#5dd28b',
+          'ferry_terminal','#5dd28b',
+          'park',       '#7dbf68',
+          'attraction', '#7dbf68',
+          'tourism',    '#7dbf68',
+          'art_gallery','#7dbf68',
+          'museum',     '#7dbf68',
+          'hotel',      '#f0c050',
+          'lodging',    '#f0c050',
+          'guest_house','#f0c050',
+          'hostel',     '#f0c050',
+          'fuel',     '#a8b0b8',
+          'bank',     '#a8b0b8',
+          'atm',      '#a8b0b8',
+          'post',     '#a8b0b8',
+          'police',   '#a8b0b8',
+          /* default */ '#cdd2d6'
+        ],
+        'circle-stroke-width': 1,
+        'circle-stroke-color': 'rgba(0,0,0,0.65)'
+      }
+    },
+
+    // POI text labels
+    { id: 'poi-label', source: 'openmaptiles', 'source-layer': 'poi',
+      type: 'symbol', minzoom: 15,
+      filter: ['all', ['has', 'name'], ['<=', ['get', 'rank'], 20]],
+      layout: {
+        'text-field': ['coalesce', ['get', 'name:th'], ['get', 'name:en'], ['get', 'name']],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10, 18, 12.5],
+        'text-anchor': 'top',
+        'text-offset': [0, 0.7],
+        'text-max-width': 8,
+        'text-padding': 4,
+        'text-optional': true
+      },
+      paint: {
+        'text-color': '#fff',
+        'text-halo-color': 'rgba(0,0,0,0.85)',
+        'text-halo-width': 1.4,
+        'text-opacity': 0.92
+      }
+    },
+
+    // Place labels (city / town names) — drawn last so they stay on top
     { id: 'place-name', source: 'openmaptiles', 'source-layer': 'place',
       type: 'symbol', minzoom: 6,
       filter: ['in', 'class', 'city', 'town', 'village', 'suburb', 'neighbourhood'],
