@@ -1,8 +1,8 @@
 // Day Walker — service worker
 // Caches app shell + map tiles/style/fonts as they load
 
-const SHELL_CACHE = 'dw-shell-v24';
-const RUNTIME_CACHE = 'dw-runtime-v24';
+const SHELL_CACHE = 'dw-shell-v25';
+const RUNTIME_CACHE = 'dw-runtime-v25';
 
 const SHELL = [
   './',

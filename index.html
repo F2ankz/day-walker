@@ -691,7 +691,7 @@
   .wp-item .meta { font-size: 11px; color: var(--text-mute); margin-top: 3px; }
   .wp-item .meta span { margin-right: 8px; }
   .wp-item .note { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
-  .wp-item .wp-edit, .wp-item .wp-del {
+  .wp-item .wp-share, .wp-item .wp-edit, .wp-item .wp-del {
     width: 28px; height: 28px; border-radius: 50%;
     background: transparent; border: 1px solid var(--line-2); color: var(--text-mute);
     cursor: pointer; flex-shrink: 0;
@@ -699,8 +699,9 @@
     font-size: 13px;
     padding: 0;
   }
-  .wp-item .wp-edit:active { background: var(--teal); color: white; border-color: var(--teal); }
-  .wp-item .wp-del:active { background: var(--danger); color: white; border-color: var(--danger); }
+  .wp-item .wp-share:active { background: var(--terracotta); color: white; border-color: var(--terracotta); }
+  .wp-item .wp-edit:active  { background: var(--teal); color: white; border-color: var(--teal); }
+  .wp-item .wp-del:active   { background: var(--danger); color: white; border-color: var(--danger); }
 
   .stats-card .stat.clickable {
     cursor: pointer;
@@ -727,6 +728,9 @@
   <div class="topbar">
     <div class="logo" id="logo"><span class="dot"></span><span>Day Walker</span></div>
     <div style="display:flex; gap:8px;">
+      <button class="iconbtn" id="btn-all-places" title="All saved places">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3" fill="currentColor"/></svg>
+      </button>
       <button class="iconbtn" id="btn-days" title="Days">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
       </button>
@@ -920,6 +924,16 @@
   <button class="btn-block" id="dd-share">Share</button>
   <button class="btn-block" id="dd-gist" style="display:none;">Share via Gist link</button>
   <button class="btn-block danger" id="dd-delete">Delete this day</button>
+  <div style="height: 24px;"></div>
+</div>
+
+<!-- All saved places sheet -->
+<div class="sheet" id="sheet-all-places">
+  <div class="sheet-handle"></div>
+  <h2>All saved places <span id="ap-count" style="color:var(--text-mute); font-weight:400; font-size:15px;"></span></h2>
+  <input type="text" id="ap-search" placeholder="🔍 Search by name or note…"
+    style="width:100%; background:var(--bg-3); border:1px solid var(--line); border-radius:12px; padding:12px 14px; color:var(--text); font-family:inherit; font-size:14px; margin-bottom: 12px; outline:none;" />
+  <div id="all-places-list"></div>
   <div style="height: 24px;"></div>
 </div>
 
@@ -2297,6 +2311,126 @@ window.addEventListener('keydown', e => {
   startFadeTimer();
 });
 
+// ---------- All saved places (across all days) ----------
+async function shareWaypoint(wp) {
+  const gmapsUrl = `https://maps.google.com/?q=${wp.lat},${wp.lng}`;
+  const osmUrl = `https://www.openstreetmap.org/?mlat=${wp.lat}&mlon=${wp.lng}#map=18/${wp.lat}/${wp.lng}`;
+  const title = wp.name || 'Saved place';
+  const lines = [
+    `📍 ${title}`,
+    wp.note ? wp.note : null,
+    `🗺️ ${gmapsUrl}`,
+    `🌍 ${osmUrl}`
+  ].filter(Boolean);
+  const text = lines.join('\n');
+  if (navigator.share) {
+    try { await navigator.share({ title, text, url: gmapsUrl }); return; }
+    catch (e) { if (e.name === 'AbortError') return; /* fall through to clipboard */ }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Link copied to clipboard');
+  } catch (e) {
+    toast('Share failed — ' + (e?.message || e));
+  }
+}
+
+let allPlacesCache = [];   // [{wp, day}]
+function renderAllPlacesList(query = '') {
+  const list = $('#all-places-list');
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? allPlacesCache.filter(({ wp }) =>
+        (wp.name || '').toLowerCase().includes(q) ||
+        (wp.note || '').toLowerCase().includes(q))
+    : allPlacesCache;
+  $('#ap-count').textContent = `(${filtered.length}${q ? ' of ' + allPlacesCache.length : ''})`;
+  if (!filtered.length) {
+    list.innerHTML = q
+      ? '<div class="wp-list-empty">No matches</div>'
+      : '<div class="wp-list-empty">No saved places yet — tap 📍 to start</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const { wp, day } of filtered) {
+    const item = document.createElement('div');
+    item.className = 'wp-item';
+    item.innerHTML = `
+      <div class="thumb">${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="">` : '📍'}</div>
+      <div class="info">
+        <div class="name">${escapeHtml(wp.name || 'Untitled')}</div>
+        <div class="meta">
+          <span>📅 ${formatDateLabel(day.date)}</span>
+          <span>🕐 ${formatClock(wp.ts)}</span>
+        </div>
+        ${wp.note ? `<div class="note">${escapeHtml(wp.note)}</div>` : ''}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <button class="wp-share" title="Share">📤</button>
+        <button class="wp-edit"  title="Edit">✏️</button>
+        <button class="wp-del"   title="Delete">×</button>
+      </div>
+    `;
+    item.addEventListener('click', e => {
+      if (e.target.closest('button')) return;
+      // Load this day and jump to the waypoint
+      state.loadedDay = day;
+      refreshMapForDay(day);
+      refreshUI();
+      clearPickPins();
+      closeSheet();
+      setTimeout(() => {
+        state.map.flyTo({ center: [wp.lng, wp.lat], zoom: 17, duration: 800 });
+        const m = state.liveMarkers.find(mk => {
+          const ll = mk.getLngLat();
+          return Math.abs(ll.lat - wp.lat) < 1e-6 && Math.abs(ll.lng - wp.lng) < 1e-6;
+        });
+        if (m && m.getPopup()) setTimeout(() => m.togglePopup(), 900);
+      }, 300);
+    });
+    item.querySelector('.wp-share').addEventListener('click', e => {
+      e.stopPropagation();
+      shareWaypoint(wp);
+    });
+    item.querySelector('.wp-edit').addEventListener('click', e => {
+      e.stopPropagation();
+      state.loadedDay = day;
+      closeSheet();
+      setTimeout(() => openEditWaypoint(wp.id), 280);
+    });
+    item.querySelector('.wp-del').addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${wp.name || 'this place'}"?`)) return;
+      const fresh = await db.get('days', day.id);
+      if (!fresh) return;
+      fresh.waypoints = fresh.waypoints.filter(w => w.id !== wp.id);
+      await db.put('days', fresh);
+      if (state.loadedDay && state.loadedDay.id === day.id) {
+        state.loadedDay = fresh;
+        refreshMapForDay(fresh);
+        refreshUI();
+      }
+      // Refresh the cache & list
+      allPlacesCache = allPlacesCache.filter(x => x.wp.id !== wp.id);
+      renderAllPlacesList($('#ap-search').value);
+      toast('Deleted');
+    });
+    list.appendChild(item);
+  }
+}
+
+async function showAllPlaces() {
+  const days = await db.getAll('days');
+  allPlacesCache = [];
+  for (const day of days) {
+    for (const wp of day.waypoints) allPlacesCache.push({ wp, day });
+  }
+  allPlacesCache.sort((a, b) => b.wp.ts - a.wp.ts);  // newest first
+  $('#ap-search').value = '';
+  renderAllPlacesList('');
+  openSheet('sheet-all-places');
+}
+
 // ---------- Days list & history ----------
 async function showDaysList() {
   const all = await db.getAll('days');
@@ -2417,12 +2551,13 @@ function renderWaypointList(day) {
         ${wp.note ? `<div class="note">${escapeHtml(wp.note)}</div>` : ''}
       </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
+        <button class="wp-share" title="Share">📤</button>
         <button class="wp-edit" title="Edit">✏️</button>
         <button class="wp-del" title="Delete">×</button>
       </div>
     `;
     item.addEventListener('click', async e => {
-      if (e.target.closest('.wp-del') || e.target.closest('.wp-edit')) return;
+      if (e.target.closest('button')) return;
       // Jump to waypoint location on map
       closeSheet();
       state.map.flyTo({ center: [wp.lng, wp.lat], zoom: 17, duration: 800 });
@@ -2434,6 +2569,10 @@ function renderWaypointList(day) {
         });
         if (m && m.getPopup()) m.togglePopup();
       }, 900);
+    });
+    item.querySelector('.wp-share').addEventListener('click', e => {
+      e.stopPropagation();
+      shareWaypoint(wp);
     });
     item.querySelector('.wp-edit').addEventListener('click', async e => {
       e.stopPropagation();
@@ -2611,6 +2750,12 @@ $('#btn-replay').addEventListener('click', () => {
   if (state.loadedDay) startReplay(state.loadedDay);
 });
 $('#btn-days').addEventListener('click', showDaysList);
+$('#btn-all-places').addEventListener('click', showAllPlaces);
+let apSearchTimer;
+$('#ap-search').addEventListener('input', e => {
+  clearTimeout(apSearchTimer);
+  apSearchTimer = setTimeout(() => renderAllPlacesList(e.target.value), 120);
+});
 $('#stat-waypoints-tile').addEventListener('click', () => {
   if (state.loadedDay) showDayDetail(state.loadedDay.id);
 });
