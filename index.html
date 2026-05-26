@@ -1132,34 +1132,10 @@ const SAT_STYLE = {
 
 function addCustomLayers() {
   const m = state.map;
-  // 3D buildings — only in street mode. Satellite already shows buildings in the imagery.
+  // 3D buildings disabled — keep map flat in all basemap modes
   try {
-    if (state.basemap !== 'satellite') {
-      const layers = m.getStyle().layers;
-      let labelLayerId;
-      for (const l of layers) {
-        if (l.type === 'symbol' && l.layout && l.layout['text-field']) { labelLayerId = l.id; break; }
-      }
-      if (m.getSource('openmaptiles') && !m.getLayer('3d-buildings')) {
-        m.addLayer({
-          id: '3d-buildings',
-          source: 'openmaptiles',
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 14,
-          paint: {
-            'fill-extrusion-color': ['interpolate', ['linear'], ['get', 'render_height'],
-                0, '#2a3138', 30, '#3a434b', 100, '#525d66', 300, '#7a8590'],
-            'fill-extrusion-height': ['get', 'render_height'],
-            'fill-extrusion-base': ['get', 'render_min_height'],
-            'fill-extrusion-opacity': 0.92
-          }
-        }, labelLayerId);
-      }
-    } else if (m.getLayer('3d-buildings')) {
-      m.removeLayer('3d-buildings');
-    }
-  } catch (e) { console.warn('3D buildings layer skipped', e); }
+    if (m.getLayer('3d-buildings')) m.removeLayer('3d-buildings');
+  } catch (e) {}
 
   if (!m.getSource('trail')) m.addSource('trail', { type: 'geojson', data: emptyGeoJSON() });
   if (!m.getLayer('trail-glow')) {
