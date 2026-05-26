@@ -649,9 +649,6 @@
   <div class="topbar">
     <div class="logo" id="logo"><span class="dot"></span><span>Day Walker</span></div>
     <div style="display:flex; gap:8px;">
-      <button class="iconbtn" id="btn-basemap" title="Toggle satellite">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2a10 10 0 0 1 10 10M2 12a10 10 0 0 0 10 10M22 12a10 10 0 0 1-10 10M12 2a10 10 0 0 0-10 10"/></svg>
-      </button>
       <button class="iconbtn" id="btn-days" title="Days">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
       </button>
@@ -783,13 +780,6 @@
         <option value="top">Top-down 🗺️</option>
       </select>
     </div>
-  </div>
-  <div class="field">
-    <label>Default map</label>
-    <select id="set-basemap">
-      <option value="satellite">Satellite 🛰️</option>
-      <option value="street">Street 🗺️</option>
-    </select>
   </div>
   <h3>Optional</h3>
   <div class="field">
@@ -1116,10 +1106,8 @@ function toast(msg, opts={}) {
 }
 
 // ---------- Map ----------
-const STREET_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 const SAT_STYLE = {
   version: 8,
-  glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
   sources: {
     sat: {
       type: 'raster',
@@ -1128,10 +1116,6 @@ const SAT_STYLE = {
       ],
       tileSize: 256, maxzoom: 19,
       attribution: 'Imagery © Esri'
-    },
-    openmaptiles: {
-      type: 'vector',
-      url: 'https://tiles.openfreemap.org/planet'
     }
   },
   layers: [
@@ -1179,10 +1163,10 @@ function addCustomLayers() {
 }
 
 function initMap(center = [100.5018, 13.7563]) {
-  state.basemap = state.settings.defaultBasemap || 'satellite';
+  state.basemap = 'satellite';
   state.map = new maplibregl.Map({
     container: 'map',
-    style: state.basemap === 'satellite' ? SAT_STYLE : STREET_STYLE_URL,
+    style: SAT_STYLE,
     center, zoom: 14, pitch: 45, bearing: 0,
     antialias: true, maxPitch: 85,
     attributionControl: { compact: true }
@@ -1203,20 +1187,6 @@ function initMap(center = [100.5018, 13.7563]) {
   });
 }
 
-function switchBasemap(name) {
-  if (!state.mapReady || state.basemap === name) return;
-  state.basemap = name;
-  const cam = {
-    center: state.map.getCenter(), zoom: state.map.getZoom(),
-    pitch: state.map.getPitch(), bearing: state.map.getBearing()
-  };
-  state.map.setStyle(name === 'satellite' ? SAT_STYLE : STREET_STYLE_URL);
-  // Re-add as soon as new style's sources are ready; idle alone can be delayed by tile loads
-  state.map.once('styledata', () => {
-    try { addCustomLayers(); } catch (e) { console.warn('layer re-add failed', e); }
-    state.map.jumpTo(cam);
-  });
-}
 
 function emptyGeoJSON() {
   return { type: 'FeatureCollection', features: [] };
@@ -2135,7 +2105,6 @@ function openSettings() {
   $('#set-acc').value = state.settings.accuracyMax;
   $('#set-speed').value = state.settings.defaultSpeed;
   $('#set-view').value = state.settings.defaultView;
-  $('#set-basemap').value = state.settings.defaultBasemap || 'satellite';
   $('#set-token').value = state.settings.githubToken;
   openSheet('sheet-settings');
 }
@@ -2147,13 +2116,6 @@ $('#set-save').addEventListener('click', async () => {
   await saveSetting('accuracyMax', Math.max(5, Number($('#set-acc').value)));
   await saveSetting('defaultSpeed', Number($('#set-speed').value));
   await saveSetting('defaultView', $('#set-view').value);
-  const newBasemap = $('#set-basemap').value;
-  if (newBasemap !== state.settings.defaultBasemap) {
-    await saveSetting('defaultBasemap', newBasemap);
-    if (state.basemap !== newBasemap) switchBasemap(newBasemap);
-  } else {
-    await saveSetting('defaultBasemap', newBasemap);
-  }
   await saveSetting('githubToken', $('#set-token').value.trim());
   refreshUI();
   closeSheet();
@@ -2372,11 +2334,6 @@ $('#plan-mode').addEventListener('change', () => {
   $('#plan-speed').value = p === 'driving' ? 30 : (p === 'bike' ? 15 : 5);
 });
 
-$('#btn-basemap').addEventListener('click', () => {
-  const next = state.basemap === 'satellite' ? 'street' : 'satellite';
-  switchBasemap(next);
-  toast(next === 'satellite' ? '🛰️ Satellite view' : '🗺️ Street view');
-});
 
 // detect user panning
 let panTimer;
@@ -2431,13 +2388,11 @@ const DEMO_ROUTE_DIST_M = 3744.9;
 // Build a day directly from a polyline of [lng,lat] pairs — no network call.
 async function runDemoFromBakedRoute() {
   const coordsLL = DEMO_ROUTE.map(([lng, lat]) => ({ lat, lng }));
-  // 1) RDP simplify (12m tolerance) — drops micro-wiggles
-  // 2) Chaikin (4 passes) — rounds remaining corners
-  // 3) Densify to ~4m steps — smooth motion during replay
-  const simplified = rdpSimplify(coordsLL, 12);
-  console.log('[route] simplified:', coordsLL.length, '→', simplified.length, 'pts');
-  const smoothed = chaikinSmooth(simplified, 4);
-  const dense = densifyRoute(smoothed, 4);
+  // Light cleanup only — keep on road centerline, let camera EMA absorb jitter
+  const simplified = rdpSimplify(coordsLL, 3);
+  console.log('[demo] raw:', coordsLL.length, '→ simplified:', simplified.length);
+  const smoothed = chaikinSmooth(simplified, 1);
+  const dense = densifyRoute(smoothed, 3);
 
   // Recompute total distance from smoothed path
   let totalDistM = 0;
@@ -2675,14 +2630,16 @@ async function dwSimulate(fromLat, fromLng, toLat, toLng, opts = {}) {
       rawDistM += haversine(route.coords[i-1].lat, route.coords[i-1].lng, route.coords[i].lat, route.coords[i].lng);
     }
     const rawKm = rawDistM / 1000;
-    // Adaptive resolution — keep total point count under ~12k for replay performance
+    // Adaptive resolution — tighter to the road. RDP is now very light (only kills
+    // sub-meter wobble) and Chaikin is reduced to 1 pass so corners stay on the road.
+    // Camera smoothing (EMA on bearing) is what handles visual jitter, not path smoothing.
     let densifyStep, passes, rdpEps;
-    if (rawKm < 5)       { densifyStep = 4;   passes = 4; rdpEps = 10; }
-    else if (rawKm < 30) { densifyStep = 8;   passes = 3; rdpEps = 15; }
-    else if (rawKm < 100){ densifyStep = 25;  passes = 2; rdpEps = 30; }
-    else if (rawKm < 300){ densifyStep = 60;  passes = 2; rdpEps = 60; }
-    else if (rawKm < 700){ densifyStep = 120; passes = 1; rdpEps = 120; }
-    else                 { densifyStep = 250; passes = 1; rdpEps = 200; }
+    if (rawKm < 5)       { densifyStep = 3;   passes = 1; rdpEps = 2; }
+    else if (rawKm < 30) { densifyStep = 6;   passes = 1; rdpEps = 4; }
+    else if (rawKm < 100){ densifyStep = 20;  passes = 0; rdpEps = 8; }
+    else if (rawKm < 300){ densifyStep = 50;  passes = 0; rdpEps = 20; }
+    else if (rawKm < 700){ densifyStep = 100; passes = 0; rdpEps = 50; }
+    else                 { densifyStep = 200; passes = 0; rdpEps = 100; }
 
     const simplified = rdpSimplify(route.coords, rdpEps);
     const smoothed = chaikinSmooth(simplified, passes);
