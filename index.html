@@ -603,13 +603,19 @@
       <option value="500">500×</option>
     </select>
   </div>
-  <h3>Google Sheet sync</h3>
-  <div class="field">
-    <label>Apps Script webhook URL (leave blank to skip)</label>
-    <input type="text" id="set-sheet-url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" />
+  <h3>Google Drive sync</h3>
+  <div class="field" style="background:var(--bg-3); border:1px solid var(--line); border-radius:12px; padding:12px 14px;">
+    <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; color:var(--text);">
+      <input type="checkbox" id="set-drive-enabled" style="width:18px; height:18px;" />
+      <span>Upload snapshot + metadata to Google Drive on every mark</span>
+    </label>
+    <div id="set-drive-status" style="font-size:11px; color:var(--text-mute); margin-top:8px; line-height:1.5;">
+      Not connected.
+    </div>
+    <button class="btn-block" id="set-drive-connect" style="margin-top:8px;">🔑 Connect Google Drive</button>
   </div>
   <div style="font-size:11px; color:var(--text-mute); line-height:1.5; margin: -8px 0 14px;">
-    In your Sheet → Extensions → Apps Script → paste a <code>doPost(e)</code> that appends <code>JSON.parse(e.postData.contents)</code> to a sheet → Deploy as Web App (Anyone access) → paste /exec URL here.
+    Files land in <b>Day Walker</b> root folder → one subfolder per route. Each waypoint becomes <code>NNN-name.snapshot.jpg</code> + <code>NNN-name.photo.jpg</code> + <code>NNN-name.json</code>. App only sees files it created (scope <code>drive.file</code>).
   </div>
   <h3>Account &amp; access</h3>
   <div class="field" id="set-user-row" style="background:var(--bg-3); border:1px solid var(--line); border-radius:12px; padding:12px 14px; flex-direction:row; align-items:center; gap:12px;">
@@ -729,6 +735,7 @@ const state = {
     googleMapsKey: '',
     defaultSpeed: 50,
     sheetWebhookUrl: '',
+    driveSync: false,
     allowedEmails: ''   // comma-separated; merged with DEFAULT_ALLOWED_EMAILS
   },
   auth: {
@@ -751,9 +758,18 @@ const state = {
   },
   // map overlays
   routeLine: null,
+  routeBehind: null,    // grows behind the car during replay
   abMarkers: { a: null, b: null },
   walkerMarker: null,
   branchMarkers: [],   // for loadedDay
+
+  // Google Drive sync state
+  drive: {
+    tokenClient: null,
+    accessToken: null,
+    tokenExpiry: 0,
+    rootFolderId: null
+  }
 };
 
 let db;
@@ -1508,25 +1524,33 @@ async function saveBranch() {
   clearFlashPin();
   state.pendingBranch = null;
 
-  // Push to Google Sheet (best-effort)
-  let sheetMsg = '';
-  if (state.settings.sheetWebhookUrl) {
-    pushToSheet({
-      seq,
-      dayId: state.loadedDay.id,
-      date: state.loadedDay.date,
-      ts: wp.ts,
-      isoTime: new Date(wp.ts).toISOString(),
-      name, address, note,
-      lat: wp.lat, lng: wp.lng,
-      photoBase64: wp.photoBase64 || '',
-      mapsUrl: `https://www.google.com/maps?q=${wp.lat},${wp.lng}`
-    }).then(ok => {
-      toast(ok ? `📤 Sent #${seq} to Google Sheet` : '⚠️ Sheet push failed (saved locally)', 3200);
+  // Push to Google Drive (best-effort)
+  let driveMsg = '';
+  if (state.settings.driveSync) {
+    pushToDrive(state.loadedDay, wp).then(res => {
+      if (res) {
+        // Persist drive IDs back to the local waypoint for reference
+        const idx = state.loadedDay.waypoints.findIndex(x => x.id === wp.id);
+        if (idx >= 0) {
+          Object.assign(state.loadedDay.waypoints[idx], {
+            driveSnapshotId: res.snapshotFileId || null,
+            drivePhotoId: res.photoFileId || null,
+            driveMetadataId: res.metadataFileId || null,
+            driveFolderId: res.folderId || null
+          });
+          db.put('days', state.loadedDay).catch(() => {});
+        }
+        toast(`☁️ #${seq} uploaded to Drive folder`, 3000);
+      } else {
+        toast('⚠️ Drive upload skipped', 2800);
+      }
+    }).catch(err => {
+      console.warn('Drive push error', err);
+      toast('⚠️ Drive upload failed (saved locally) — ' + (err.message || ''), 4500);
     });
-    sheetMsg = ' · sending to Sheet…';
+    driveMsg = ' · uploading to Drive…';
   }
-  toast(`✓ Saved #${seq} "${name}"${sheetMsg}`, 3500);
+  toast(`✓ Saved #${seq} "${name}"${driveMsg}`, 3500);
 }
 
 async function pushToSheet(payload) {
@@ -1544,6 +1568,183 @@ async function pushToSheet(payload) {
     console.warn('Sheet push failed', e);
     return false;
   }
+}
+
+// ---------- Google Drive sync ----------
+// Uses GIS OAuth token client with scope drive.file (per-app access — the app
+// can only see files it created, never the user's other Drive files).
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_ROOT_NAME = 'Day Walker';
+
+function initDriveTokenClient() {
+  if (state.drive.tokenClient) return state.drive.tokenClient;
+  if (!window.google?.accounts?.oauth2) return null;
+  state.drive.tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: () => {}   // replaced per-request
+  });
+  return state.drive.tokenClient;
+}
+
+async function getDriveToken({ interactive = false } = {}) {
+  if (state.drive.accessToken && Date.now() < state.drive.tokenExpiry) {
+    return state.drive.accessToken;
+  }
+  const client = initDriveTokenClient();
+  if (!client) throw new Error('GIS not loaded yet');
+  return new Promise((resolve, reject) => {
+    client.callback = (resp) => {
+      if (resp.error) { reject(new Error(resp.error)); return; }
+      state.drive.accessToken = resp.access_token;
+      state.drive.tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
+      try { localStorage.setItem('dw_drive_token', JSON.stringify({ t: resp.access_token, e: state.drive.tokenExpiry })); } catch (e) {}
+      resolve(resp.access_token);
+    };
+    client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+  });
+}
+
+function loadCachedDriveToken() {
+  try {
+    const cached = JSON.parse(localStorage.getItem('dw_drive_token') || 'null');
+    if (cached && cached.t && cached.e && Date.now() < cached.e) {
+      state.drive.accessToken = cached.t;
+      state.drive.tokenExpiry = cached.e;
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+async function driveApi(path, options = {}) {
+  const token = await getDriveToken();
+  const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
+    ...options,
+    headers: { 'Authorization': `Bearer ${token}`, ...(options.headers || {}) }
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    if (res.status === 401) {
+      state.drive.accessToken = null;
+      state.drive.tokenExpiry = 0;
+    }
+    throw new Error(`Drive ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
+async function driveFindFolder(name, parentId) {
+  const safeName = name.replace(/'/g, "\\'");
+  let q = `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  if (parentId) q += ` and '${parentId}' in parents`;
+  const res = await driveApi(`/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=1`);
+  return res.files?.[0]?.id || null;
+}
+
+async function driveCreateFolder(name, parentId) {
+  const body = { name, mimeType: 'application/vnd.google-apps.folder' };
+  if (parentId) body.parents = [parentId];
+  const res = await driveApi('/files?fields=id,name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return res.id;
+}
+
+async function driveFindOrCreateFolder(name, parentId) {
+  return (await driveFindFolder(name, parentId)) || (await driveCreateFolder(name, parentId));
+}
+
+async function driveUpload(name, parentId, mimeType, contentBlobOrString) {
+  const token = await getDriveToken();
+  const boundary = 'dw_' + Math.random().toString(36).slice(2);
+  const metadata = { name, parents: [parentId] };
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
+    JSON.stringify(metadata),
+    `\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
+    contentBlobOrString,
+    `\r\n--${boundary}--`
+  ], { type: `multipart/related; boundary=${boundary}` });
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,name', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` },
+    body
+  });
+  if (!res.ok) throw new Error(`Upload ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+function base64ToBlob(dataUrl) {
+  const [meta, b64] = dataUrl.split(',');
+  const mime = /:(.*?);/.exec(meta)?.[1] || 'application/octet-stream';
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+function safeFileName(s) {
+  return String(s || 'untitled')
+    .replace(/[\/\\:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60) || 'untitled';
+}
+
+async function getRouteFolderId(day) {
+  if (day.driveFolderId) {
+    try {
+      await driveApi(`/files/${day.driveFolderId}?fields=id,name,trashed`);
+      return day.driveFolderId;
+    } catch (e) {
+      console.warn('Cached folder gone, recreating', e.message);
+      day.driveFolderId = null;
+    }
+  }
+  if (!state.drive.rootFolderId) {
+    state.drive.rootFolderId = await driveFindOrCreateFolder(DRIVE_ROOT_NAME, null);
+  }
+  const fromName = safeFileName(day.from?.name || 'A');
+  const toName = safeFileName(day.to?.name || 'B');
+  const folderName = `${day.date} — ${fromName} → ${toName}`;
+  const id = await driveFindOrCreateFolder(folderName, state.drive.rootFolderId);
+  day.driveFolderId = id;
+  await db.put('days', day);
+  return id;
+}
+
+async function pushToDrive(day, wp) {
+  if (!state.settings.driveSync) return null;
+  const folderId = await getRouteFolderId(day);
+  const baseName = `${String(wp.seq).padStart(3, '0')}-${safeFileName(wp.name)}`;
+  const uploads = {};
+
+  if (wp.snapshotBase64) {
+    const r = await driveUpload(`${baseName}.snapshot.jpg`, folderId, 'image/jpeg', base64ToBlob(wp.snapshotBase64));
+    uploads.snapshotFileId = r.id;
+    uploads.snapshotLink = r.webViewLink;
+  }
+  if (wp.photoBase64) {
+    const r = await driveUpload(`${baseName}.photo.jpg`, folderId, 'image/jpeg', base64ToBlob(wp.photoBase64));
+    uploads.photoFileId = r.id;
+    uploads.photoLink = r.webViewLink;
+  }
+  const metadata = {
+    seq: wp.seq,
+    name: wp.name, address: wp.address, note: wp.note,
+    lat: wp.lat, lng: wp.lng,
+    ts: wp.ts,
+    isoTime: new Date(wp.ts).toISOString(),
+    mapsUrl: `https://www.google.com/maps?q=${wp.lat},${wp.lng}`,
+    routeFrom: day.from?.name, routeTo: day.to?.name,
+    dayId: day.id, date: day.date,
+    ...uploads
+  };
+  const metaRes = await driveUpload(`${baseName}.json`, folderId, 'application/json', JSON.stringify(metadata, null, 2));
+  return { folderId, metadataFileId: metaRes.id, ...uploads };
 }
 
 async function compressImage(file) {
@@ -1777,7 +1978,8 @@ $('#btn-places').addEventListener('click', showAllPlaces);
 $('#btn-settings').addEventListener('click', () => {
   $('#set-gmaps-key').value = state.settings.googleMapsKey || '';
   $('#set-speed').value = String(state.settings.defaultSpeed);
-  $('#set-sheet-url').value = state.settings.sheetWebhookUrl || '';
+  $('#set-drive-enabled').checked = !!state.settings.driveSync;
+  refreshDriveStatusUI();
   $('#set-allowed-emails').value = state.settings.allowedEmails || '';
   // Populate user chip
   if (state.auth.user) {
@@ -1798,11 +2000,35 @@ $('#btn-settings').addEventListener('click', () => {
 $('#set-save').addEventListener('click', async () => {
   await saveSetting('googleMapsKey', $('#set-gmaps-key').value.trim());
   await saveSetting('defaultSpeed', Number($('#set-speed').value) || 50);
-  await saveSetting('sheetWebhookUrl', $('#set-sheet-url').value.trim());
+  await saveSetting('driveSync', $('#set-drive-enabled').checked);
   await saveSetting('allowedEmails', $('#set-allowed-emails').value.trim());
   closeSheet();
   toast('Settings saved');
 });
+$('#set-drive-connect').addEventListener('click', async () => {
+  try {
+    $('#set-drive-status').textContent = 'Requesting consent…';
+    await getDriveToken({ interactive: true });
+    refreshDriveStatusUI();
+    toast('☁️ Drive connected');
+  } catch (e) {
+    $('#set-drive-status').textContent = 'Connect failed: ' + (e.message || e);
+    toast('Drive connect failed', 3500);
+  }
+});
+
+function refreshDriveStatusUI() {
+  const el = $('#set-drive-status');
+  if (!el) return;
+  if (state.drive.accessToken && Date.now() < state.drive.tokenExpiry) {
+    const min = Math.max(0, Math.round((state.drive.tokenExpiry - Date.now()) / 60000));
+    el.innerHTML = `✓ Connected · token expires in ~${min} min` +
+      (state.drive.rootFolderId ? `<br>Root folder: <code>${state.drive.rootFolderId.slice(0,12)}…</code>` : '');
+  } else {
+    el.textContent = 'Not connected.';
+  }
+}
+
 $('#set-signout').addEventListener('click', () => {
   if (!confirm('Sign out? You will need to sign in with Google again.')) return;
   // Revoke the Google session so the next prompt forces account chooser
@@ -2008,6 +2234,9 @@ function unlockApp() {
     const info = $('#login-info');
     if (info) info.textContent = '';
   }
+  // Hydrate cached Drive token + prep token client (no UI prompt)
+  loadCachedDriveToken();
+  initDriveTokenClient();
   // Begin the boot-after-auth sequence
   if (!state.__bootedAfterAuth) {
     state.__bootedAfterAuth = true;
