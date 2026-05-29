@@ -560,6 +560,9 @@
     <span><b id="wp-seq-label" style="color:var(--teal-2);">#—</b></span>
     <span id="wp-coord-text">—</span>
   </div>
+  <div class="photo-preview" id="wp-snapshot-preview" style="aspect-ratio:16/10; margin-bottom:8px;">
+    <div>📸 Capturing area…</div>
+  </div>
   <div class="photo-preview" id="wp-photo-preview">
     <div>📷 Tap to add photo</div>
   </div>
@@ -1019,8 +1022,18 @@ async function generateRoute() {
       return;
     }
     const r = res.routes[0];
-    // Decode polyline (overview_path is an array of LatLng objects)
-    const path = r.overview_path.map(p => ({ lat: p.lat(), lng: p.lng() }));
+    // Build the full road-precise path from each step's geometry (denser than
+    // overview_path — overview is simplified for display, steps follow the road).
+    const path = [];
+    for (const leg of r.legs) {
+      for (const step of leg.steps) {
+        for (const p of step.path) path.push({ lat: p.lat(), lng: p.lng() });
+      }
+    }
+    // De-duplicate consecutive identical points
+    for (let i = path.length - 1; i > 0; i--) {
+      if (path[i].lat === path[i-1].lat && path[i].lng === path[i-1].lng) path.splice(i, 1);
+    }
 
     // Build a day record (re-using "day" terminology even though no GPS tracking)
     const { id, date } = todayId();
@@ -1046,6 +1059,7 @@ async function generateRoute() {
 }
 
 function drawRoute(day) {
+  // Static route preview shown when NOT replaying.
   if (state.routeLine) { state.routeLine.setMap(null); state.routeLine = null; }
   state.routeLine = new google.maps.Polyline({
     path: day.path,
@@ -1055,6 +1069,8 @@ function drawRoute(day) {
     strokeWeight: 5,
     map: state.map
   });
+  // Clean any leftover replay trail
+  if (state.routeBehind) { state.routeBehind.setMap(null); state.routeBehind = null; }
   // Endpoints
   dropABMarker('a', day.from.lat, day.from.lng);
   dropABMarker('b', day.to.lat, day.to.lng);
@@ -1107,6 +1123,7 @@ function showBranchInfo(wp) {
       <div style="font-weight:600; font-size:14px;"><span style="color:#2d6a6a;">#${wp.seq}</span> ${escapeHtml(wp.name || 'Branch')}</div>
       ${wp.address ? `<div style="font-size:11px; color:#666; margin-top:4px;">${escapeHtml(wp.address)}</div>` : ''}
       ${wp.note ? `<div style="font-size:12px; color:#444; margin-top:4px;">${escapeHtml(wp.note)}</div>` : ''}
+      ${wp.snapshotBase64 ? `<img src="${wp.snapshotBase64}" style="width:100%; border-radius:8px; margin-top:6px;" />` : ''}
       ${wp.photoBase64 ? `<img src="${wp.photoBase64}" style="width:100%; border-radius:8px; margin-top:6px;" />` : ''}
     </div>`;
   _branchInfoWindow = new google.maps.InfoWindow({ content: html, position: { lat: wp.lat, lng: wp.lng } });
@@ -1142,6 +1159,20 @@ function startReplay(day) {
   $('#rp-branches').textContent = day.waypoints.length;
   $$('#view-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'follow'));
   setPlayPauseUI(true);
+
+  // Hide the static full-route preview — the trail will be DRAWN behind the car
+  if (state.routeLine) state.routeLine.setMap(null);
+  if (state.routeBehind) { state.routeBehind.setMap(null); state.routeBehind = null; }
+  state.routeBehind = new google.maps.Polyline({
+    path: [],
+    geodesic: true,
+    strokeColor: '#e09972',
+    strokeOpacity: 1,
+    strokeWeight: 6,
+    map: state.map,
+    zIndex: 100
+  });
+
   ensureWalkerMarker();
   rafLoop(day);
 }
@@ -1154,6 +1185,9 @@ function stopReplay() {
   if (state.replay.markMode) setMarkMode(false);
   $('#replay-overlay').classList.remove('active');
   if (state.walkerMarker) { state.walkerMarker.setMap(null); state.walkerMarker = null; }
+  // Tear down trail-behind, restore static full-route preview
+  if (state.routeBehind) { state.routeBehind.setMap(null); state.routeBehind = null; }
+  if (state.loadedDay) drawRoute(state.loadedDay);
 }
 
 function setPlayPauseUI(playing) {
@@ -1255,6 +1289,19 @@ function rafLoop(day) {
       state.walkerMarker.setPosition({ lat: pt.lat, lng: pt.lng });
       state.walkerMarker.setIcon(carSymbolIcon(pt.bearing));
     }
+    // Grow trail behind the car — all path vertices up to current segment, plus the interpolated head
+    if (state.routeBehind) {
+      // Find current segment index from cumDist (same lookup as pointAtDistance)
+      let lo = 0, hi = r.cumDist.length - 1;
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (r.cumDist[mid] <= targetD) lo = mid; else hi = mid;
+      }
+      // path[0..lo] are fully behind; append the interpolated head
+      const behind = r.pathPoints.slice(0, lo + 1);
+      behind.push({ lat: pt.lat, lng: pt.lng });
+      state.routeBehind.setPath(behind);
+    }
     // Camera
     applyCamera(pt);
     // HUD
@@ -1332,16 +1379,54 @@ function clearFlashPin() { if (_flashPin) { _flashPin.map = null; _flashPin = nu
 
 // ---------- Branch waypoint sheet ----------
 let pendingPhotoBase64 = null;
+let pendingSnapshotBase64 = null;
 let editingWaypointId = null;
 let _addrToken = null;
+let _snapshotToken = null;
+
+// Capture a static map image of the given coordinates via Google Static Maps API.
+// Returned as a base64 data URL ready to store in IndexedDB.
+async function captureLocationSnapshot(lat, lng) {
+  const key = state.settings.googleApiKey;
+  if (!key) return null;
+  const url = `https://maps.googleapis.com/maps/api/staticmap`
+    + `?center=${lat},${lng}&zoom=18&size=480x300&maptype=hybrid`
+    + `&markers=color:0xe09972%7C${lat},${lng}&scale=2&key=${encodeURIComponent(key)}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    return await new Promise(resolve => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => resolve(null);
+      fr.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.warn('static map snapshot failed:', e);
+    return null;
+  }
+}
+
+function updateSnapshotPreview() {
+  const el = $('#wp-snapshot-preview');
+  if (!el) return;
+  if (pendingSnapshotBase64) {
+    el.innerHTML = `<img src="${pendingSnapshotBase64}" alt="Area snapshot" style="width:100%;height:100%;object-fit:cover;" />`;
+  } else {
+    el.innerHTML = '<div>📸 Snapshot unavailable</div>';
+  }
+}
 
 function openBranchSheet() {
   if (!state.pendingBranch && !editingWaypointId) return;
   pendingPhotoBase64 = null;
+  pendingSnapshotBase64 = null;
   $('#wp-name').value = '';
   $('#wp-address').value = '';
   $('#wp-note').value = '';
   $('#wp-photo-preview').innerHTML = '<div>📷 Tap to add photo</div>';
+  $('#wp-snapshot-preview').innerHTML = '<div>📸 Capturing area…</div>';
   $('#wp-addr-status').textContent = '';
   const coord = state.pendingBranch;
   const seq = (state.loadedDay?.waypoints?.length || 0) + 1;
@@ -1363,6 +1448,16 @@ function openBranchSheet() {
       $('#wp-addr-status').textContent = '· not found';
     }
   });
+
+  // Fetch area snapshot in parallel; update the preview when it arrives
+  const sTok = Symbol('snap');
+  _snapshotToken = sTok;
+  captureLocationSnapshot(coord.lat, coord.lng).then(s => {
+    if (_snapshotToken !== sTok) return;
+    pendingSnapshotBase64 = s;
+    updateSnapshotPreview();
+  });
+
   openSheet('sheet-waypoint');
 }
 
@@ -1402,6 +1497,7 @@ async function saveBranch() {
     lng: state.pendingBranch.lng,
     name, address, note,
     photoBase64: pendingPhotoBase64 || null,
+    snapshotBase64: pendingSnapshotBase64 || null,
     ts: Date.now()
   };
   state.loadedDay.waypoints.push(wp);
@@ -1538,7 +1634,7 @@ async function showDayDetail(id) {
       const it = document.createElement('div');
       it.className = 'wp-item';
       it.innerHTML = `
-        <div class="thumb">${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="">` : String(wp.seq)}</div>
+        <div class="thumb">${wp.photoBase64 ? `<img src="${wp.photoBase64}" alt="">` : wp.snapshotBase64 ? `<img src="${wp.snapshotBase64}" alt="">` : String(wp.seq)}</div>
         <div class="wp-info">
           <div class="name"><span style="color:var(--teal-2);">#${wp.seq}</span> ${escapeHtml(wp.name || 'Untitled')}</div>
           ${wp.address ? `<div class="meta">📍 ${escapeHtml(wp.address)}</div>` : ''}
