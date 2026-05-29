@@ -1020,58 +1020,113 @@ function clearABMarkers() {
   }
 }
 
+// Routes API v2 — HIGH_QUALITY polyline has many more vertices on curves than
+// the legacy Directions API, so the trail hugs real road geometry instead of
+// cutting chords. Needs "Routes API" enabled in Google Cloud Console (separate
+// from the legacy Directions API).
+async function fetchRouteV2(from, to, mode) {
+  const key = state.settings.googleMapsKey;
+  if (!key) return null;
+  const travelMode = mode === 'WALKING' ? 'WALK'
+                   : mode === 'BICYCLING' ? 'BICYCLE'
+                   : mode === 'TRANSIT' ? 'TRANSIT'
+                   : 'DRIVE';
+  try {
+    const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.geoJsonLinestring'
+      },
+      body: JSON.stringify({
+        origin:      { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
+        destination: { location: { latLng: { latitude: to.lat,   longitude: to.lng   } } },
+        travelMode,
+        polylineQuality: 'HIGH_QUALITY',
+        polylineEncoding: 'GEO_JSON_LINESTRING'
+      })
+    });
+    if (!res.ok) { console.warn('Routes v2 HTTP', res.status, await res.text()); return null; }
+    const data = await res.json();
+    const route = data?.routes?.[0];
+    const coords = route?.polyline?.geoJsonLinestring?.coordinates;
+    if (!coords?.length) return null;
+    const dur = parseInt((route.duration || '0').replace(/[^\d]/g, '')) || 0;
+    return {
+      path: coords.map(([lng, lat]) => ({ lat, lng })),
+      distanceM: route.distanceMeters || 0,
+      durationS: dur,
+      provider: 'v2'
+    };
+  } catch (e) {
+    console.warn('Routes v2 error', e);
+    return null;
+  }
+}
+
+// Legacy Directions API fallback — uses step paths (denser than overview_path)
+function fetchRouteLegacy(from, to, mode) {
+  return new Promise(resolve => {
+    state.ds.route({
+      origin: { lat: from.lat, lng: from.lng },
+      destination: { lat: to.lat, lng: to.lng },
+      travelMode: mode,
+      provideRouteAlternatives: false
+    }, (res, status) => {
+      if (status !== 'OK' || !res?.routes?.[0]) { resolve(null); return; }
+      const r = res.routes[0];
+      const path = [];
+      for (const leg of r.legs) {
+        for (const step of leg.steps) {
+          for (const p of step.path) path.push({ lat: p.lat(), lng: p.lng() });
+        }
+      }
+      // Drop consecutive duplicates
+      for (let i = path.length - 1; i > 0; i--) {
+        if (path[i].lat === path[i-1].lat && path[i].lng === path[i-1].lng) path.splice(i, 1);
+      }
+      resolve({
+        path,
+        distanceM: r.legs[0]?.distance?.value || 0,
+        durationS: r.legs[0]?.duration?.value || 0,
+        provider: 'legacy'
+      });
+    });
+  });
+}
+
 async function generateRoute() {
   if (!state.plan.from || !state.plan.to) {
     toast('Pick both start and end');
     return;
   }
   toast('Generating route…');
-  const req = {
-    origin: { lat: state.plan.from.lat, lng: state.plan.from.lng },
-    destination: { lat: state.plan.to.lat, lng: state.plan.to.lng },
-    travelMode: state.plan.mode,
-    provideRouteAlternatives: false
-  };
-  state.ds.route(req, async (res, status) => {
-    if (status !== 'OK' || !res?.routes?.[0]) {
-      toast('Could not find a route: ' + status);
-      return;
-    }
-    const r = res.routes[0];
-    // Build the full road-precise path from each step's geometry (denser than
-    // overview_path — overview is simplified for display, steps follow the road).
-    const path = [];
-    for (const leg of r.legs) {
-      for (const step of leg.steps) {
-        for (const p of step.path) path.push({ lat: p.lat(), lng: p.lng() });
-      }
-    }
-    // De-duplicate consecutive identical points
-    for (let i = path.length - 1; i > 0; i--) {
-      if (path[i].lat === path[i-1].lat && path[i].lng === path[i-1].lng) path.splice(i, 1);
-    }
+  const mode = state.plan.mode;
+  // Try HIGH_QUALITY Routes API first, fall back to legacy
+  let result = await fetchRouteV2(state.plan.from, state.plan.to, mode);
+  if (!result) result = await fetchRouteLegacy(state.plan.from, state.plan.to, mode);
+  if (!result) { toast('Could not find a route'); return; }
+  console.log('[route]', result.provider, result.path.length, 'pts,', result.distanceM, 'm');
 
-    // Build a day record (re-using "day" terminology even though no GPS tracking)
-    const { id, date } = todayId();
-    const day = {
-      id, date,
-      createdAt: Date.now(),
-      mode: state.plan.mode,
-      from: state.plan.from,
-      to: state.plan.to,
-      path,
-      distanceM: r.legs[0]?.distance?.value || 0,
-      durationS: r.legs[0]?.duration?.value || 0,
-      waypoints: []
-    };
-    await db.put('days', day);
-    state.loadedDay = day;
-    drawRoute(day);
-    closeSheet();
-    toast(`Route ready: ${fmtKm(day.distanceM)} km — tap ▶ to replay`);
-    // Auto start replay after a brief pause
-    setTimeout(() => startReplay(day), 600);
-  });
+  const { id, date } = todayId();
+  const day = {
+    id, date,
+    createdAt: Date.now(),
+    mode,
+    from: state.plan.from,
+    to: state.plan.to,
+    path: result.path,
+    distanceM: result.distanceM,
+    durationS: result.durationS,
+    waypoints: []
+  };
+  await db.put('days', day);
+  state.loadedDay = day;
+  drawRoute(day);
+  closeSheet();
+  toast(`Route ready: ${fmtKm(day.distanceM)} km · ${result.path.length} pts — tap ▶ to replay`);
+  setTimeout(() => startReplay(day), 600);
 }
 
 function drawRoute(day) {
