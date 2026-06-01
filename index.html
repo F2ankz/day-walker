@@ -878,6 +878,20 @@ function toast(msg, durationMs=2400) {
 }
 
 // ---------- Google Maps loader ----------
+// Suppress Google Maps' default "This page can't load Google Maps correctly"
+// modal — define gm_authFailure BEFORE the Maps script loads. We show our own
+// friendlier toast so the user knows what to fix.
+window.gm_authFailure = function () {
+  console.error('Google Maps auth failed — check API key, HTTP referrer allowlist, billing, and enabled APIs in Google Cloud Console.');
+  try {
+    // Hide any modal Google may have already injected
+    document.querySelectorAll('.gm-err-container, .dismissButton').forEach(el => el.remove());
+  } catch (e) {}
+  if (typeof toast === 'function') {
+    toast('Google Maps auth failed — open Settings to verify API key, or check Cloud Console (key restrictions, billing, Maps JS API enabled).', 7000);
+  }
+};
+
 function loadGoogleMaps() {
   return new Promise((resolve, reject) => {
     const key = state.settings.googleMapsKey || DEFAULT_GMAPS_KEY;
@@ -888,12 +902,21 @@ function loadGoogleMaps() {
     if (window.google?.maps) { resolve(); return; }
     window.__gmReady = () => resolve();
     const s = document.createElement('script');
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry,marker&v=weekly&callback=__gmReady`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry,marker&v=weekly&callback=__gmReady&loading=async`;
     s.async = true; s.defer = true;
     s.onerror = () => reject(new Error('Failed to load Google Maps. Check API key & network.'));
     document.head.appendChild(s);
   });
 }
+
+// Belt-and-suspenders: also strip the popup if Google inserts it after first paint.
+const _gmErrorObserver = new MutationObserver(() => {
+  document.querySelectorAll('.gm-err-container, .gm-err-content, .gm-err-autocomplete').forEach(el => {
+    const modal = el.closest('div[style*="z-index"]') || el;
+    modal.remove();
+  });
+});
+_gmErrorObserver.observe(document.documentElement, { childList: true, subtree: true });
 
 // ---------- Map init ----------
 async function initMap() {
