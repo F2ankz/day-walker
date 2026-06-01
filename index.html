@@ -942,30 +942,49 @@ function loadGoogleMaps() {
 
 // Belt-and-suspenders: strip the auth-error dialog whatever shape Google uses.
 function killGmErrorDialogs() {
-  // Known class-based containers
+  // 1) Known class-based containers
   document.querySelectorAll('.gm-err-container, .gm-err-content, .gm-err-autocomplete').forEach(el => {
-    const modal = el.closest('div[style*="z-index"]') || el;
-    modal.remove();
+    (el.closest('div[style*="z-index"]') || el).remove();
   });
-  // Text-based fallback: any element whose text is the auth-error message.
-  // Walk shallow top-level overlays only (direct children of body) to stay cheap.
-  const needles = ["can't load Google Maps", 'Do you own this website'];
-  for (const node of document.body ? document.body.children : []) {
-    const txt = node.textContent || '';
-    if (needles.some(n => txt.includes(n)) && txt.length < 400) {
-      node.remove();
+  // 2) The auth-error dialog always contains a "Do you own this website?" link
+  //    pointing at Google's API key help page. Find that link and remove its
+  //    top-level dialog ancestor.
+  const links = document.querySelectorAll('a[href*="error-messages"], a[href*="developers.google.com/maps"]');
+  for (const a of links) {
+    const txt = (a.textContent || '');
+    if (/own this website/i.test(txt) || /error-messages/i.test(a.href)) {
+      // climb to the outermost fixed/absolute card (max 6 levels)
+      let el = a, top = a;
+      for (let i = 0; i < 6 && el; i++) {
+        const pos = getComputedStyle(el).position;
+        if (pos === 'fixed' || pos === 'absolute') top = el;
+        el = el.parentElement;
+      }
+      (top || a).remove();
     }
   }
-}
-const _gmErrorObserver = new MutationObserver(killGmErrorDialogs);
-if (document.body) {
-  _gmErrorObserver.observe(document.body, { childList: true, subtree: true });
-} else {
-  window.addEventListener('DOMContentLoaded', () => {
-    _gmErrorObserver.observe(document.body, { childList: true, subtree: true });
-    killGmErrorDialogs();
+  // 3) Text fallback across all small elements
+  document.querySelectorAll('div').forEach(node => {
+    const txt = node.textContent || '';
+    if (txt.length < 200 && /can't load Google Maps correctly/i.test(txt)) {
+      let el = node;
+      const pos = getComputedStyle(node).position;
+      if (pos !== 'fixed' && pos !== 'absolute') {
+        el = node.closest('div[style*="position"]') || node.parentElement || node;
+      }
+      el.remove();
+    }
   });
 }
+const _gmErrorObserver = new MutationObserver(killGmErrorDialogs);
+function startGmErrorGuard() {
+  _gmErrorObserver.observe(document.body, { childList: true, subtree: true });
+  // Interval safety net for the first 30s (covers late/async injection)
+  let ticks = 0;
+  const iv = setInterval(() => { killGmErrorDialogs(); if (++ticks > 60) clearInterval(iv); }, 500);
+}
+if (document.body) startGmErrorGuard();
+else window.addEventListener('DOMContentLoaded', startGmErrorGuard);
 
 // ---------- Map init ----------
 async function initMap() {
