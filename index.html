@@ -1498,7 +1498,7 @@ async function captureLocationSnapshot(lat, lng) {
   const key = state.settings.googleMapsKey || DEFAULT_GMAPS_KEY;
   if (!key) return { error: 'No API key. Set one in Settings.' };
   const url = `https://maps.googleapis.com/maps/api/staticmap`
-    + `?center=${lat},${lng}&zoom=18&size=480x300&maptype=hybrid`
+    + `?center=${lat},${lng}&zoom=16&size=480x360&maptype=hybrid`
     + `&markers=color:0xe09972%7C${lat},${lng}&scale=2&key=${encodeURIComponent(key)}`;
   try {
     const res = await fetch(url);
@@ -1642,14 +1642,14 @@ async function saveBranch() {
         const idx = state.loadedDay.waypoints.findIndex(x => x.id === wp.id);
         if (idx >= 0) {
           Object.assign(state.loadedDay.waypoints[idx], {
-            driveSnapshotId: res.snapshotFileId || null,
+            driveSnapshotId: res.snapshotFileId || state.loadedDay.waypoints[idx].driveSnapshotId || null,
             drivePhotoId: res.photoFileId || null,
-            driveMetadataId: res.metadataFileId || null,
-            driveFolderId: res.folderId || null
+            driveFolderId: res.folderId || null,
+            driveSynced: true
           });
           db.put('days', state.loadedDay).catch(() => {});
         }
-        toast(`☁️ #${seq} uploaded to Drive folder`, 3000);
+        toast(`☁️ #${seq} added to Drive CSV`, 3000);
       } else {
         toast('⚠️ Drive upload skipped', 2800);
       }
@@ -1856,6 +1856,70 @@ async function getRouteFolderId(day) {
   return id;
 }
 
+// --- CSV (spreadsheet) export of a route's waypoints ---
+const CSV_HEADERS = ['seq','name','address','note','lat','lng','ts','isoTime','mapsUrl','routeFrom','routeTo','dayId','date','snapshotFileId','snapshotLink'];
+
+function csvCell(v) {
+  const s = (v == null) ? '' : String(v);
+  // Quote if it contains comma, quote, or newline; escape quotes by doubling
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function buildRouteCsv(day) {
+  const rows = [CSV_HEADERS.join(',')];
+  const sorted = [...day.waypoints].sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  for (const wp of sorted) {
+    rows.push([
+      wp.seq,
+      wp.name, wp.address, wp.note,
+      wp.lat, wp.lng,
+      wp.ts,
+      new Date(wp.ts).toISOString(),
+      `https://www.google.com/maps?q=${wp.lat},${wp.lng}`,
+      day.from?.name || '', day.to?.name || '',
+      day.id, day.date,
+      wp.driveSnapshotId || '',
+      wp.driveSnapshotLink || ''
+    ].map(csvCell).join(','));
+  }
+  // Prepend BOM so Excel opens Thai/UTF-8 correctly
+  return '﻿' + rows.join('\r\n');
+}
+
+// Create or overwrite a file by name within a folder. Returns {id, webViewLink}.
+async function driveUpsertFile(name, folderId, mimeType, content, cachedId) {
+  // If we have a cached id, update its media in place
+  if (cachedId) {
+    try {
+      const token = await ensureDriveToken();
+      const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${cachedId}?uploadType=media&fields=id,webViewLink`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': mimeType },
+        body: content
+      });
+      if (res.ok) return res.json();
+      // fall through to create if update failed (e.g. file deleted)
+    } catch (e) { /* fall through */ }
+  }
+  // Look for an existing file with the same name to avoid duplicates
+  const safe = name.replace(/'/g, "\\'");
+  const q = `name='${safe}' and '${folderId}' in parents and trashed=false`;
+  try {
+    const found = await driveApi(`/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
+    const existingId = found.files?.[0]?.id;
+    if (existingId) {
+      const token = await ensureDriveToken();
+      const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=media&fields=id,webViewLink`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': mimeType },
+        body: content
+      });
+      if (res.ok) return res.json();
+    }
+  } catch (e) { /* fall through to create */ }
+  return driveUpload(name, folderId, mimeType, content);
+}
+
 async function pushToDrive(day, wp, { force = false } = {}) {
   if (!state.settings.driveSync && !force) return null;
   const folderId = await getRouteFolderId(day);
@@ -1872,19 +1936,21 @@ async function pushToDrive(day, wp, { force = false } = {}) {
     uploads.photoFileId = r.id;
     uploads.photoLink = r.webViewLink;
   }
-  const metadata = {
-    seq: wp.seq,
-    name: wp.name, address: wp.address, note: wp.note,
-    lat: wp.lat, lng: wp.lng,
-    ts: wp.ts,
-    isoTime: new Date(wp.ts).toISOString(),
-    mapsUrl: `https://www.google.com/maps?q=${wp.lat},${wp.lng}`,
-    routeFrom: day.from?.name, routeTo: day.to?.name,
-    dayId: day.id, date: day.date,
-    ...uploads
-  };
-  const metaRes = await driveUpload(`${baseName}.json`, folderId, 'application/json', JSON.stringify(metadata, null, 2));
-  return { folderId, metadataFileId: metaRes.id, ...uploads };
+
+  // Reflect this waypoint's snapshot ids onto the in-memory day so the CSV row
+  // for it has the correct links, then (re)write the single route CSV.
+  const wpRef = day.waypoints.find(x => x.id === wp.id);
+  if (wpRef) {
+    if (uploads.snapshotFileId) wpRef.driveSnapshotId = uploads.snapshotFileId;
+    if (uploads.snapshotLink)   wpRef.driveSnapshotLink = uploads.snapshotLink;
+  }
+  const csv = buildRouteCsv(day);
+  const csvName = `${day.date} branches.csv`;
+  const csvRes = await driveUpsertFile(csvName, folderId, 'text/csv', csv, day.driveCsvId);
+  day.driveCsvId = csvRes.id;
+  await db.put('days', day).catch(() => {});
+
+  return { folderId, csvFileId: csvRes.id, csvLink: csvRes.webViewLink, ...uploads };
 }
 
 async function compressImage(file) {
@@ -2168,8 +2234,8 @@ $('#set-drive-syncall').addEventListener('click', async () => {
     const tasks = [];
     let skipped = 0;
     for (const d of days) for (const wp of d.waypoints) {
-      // Skip anything already uploaded (has a Drive metadata file id)
-      if (wp.driveMetadataId) { skipped++; continue; }
+      // Skip anything already uploaded
+      if (wp.driveSynced) { skipped++; continue; }
       tasks.push({ day: d, wp });
     }
     if (!tasks.length) {
@@ -2183,19 +2249,16 @@ $('#set-drive-syncall').addEventListener('click', async () => {
       const { day, wp } = tasks[i];
       try {
         const res = await pushToDrive(day, wp, { force: true });
-        // Persist the returned Drive ids so re-runs skip this waypoint
+        // Mark as synced so re-runs skip this waypoint. pushToDrive already
+        // mutated `day` (snapshot ids + driveCsvId) and persisted it.
         if (res) {
-          const fresh = await db.get('days', day.id);
-          const idx = fresh?.waypoints.findIndex(x => x.id === wp.id);
-          if (fresh && idx >= 0) {
-            Object.assign(fresh.waypoints[idx], {
-              driveSnapshotId: res.snapshotFileId || null,
-              drivePhotoId: res.photoFileId || null,
-              driveMetadataId: res.metadataFileId || null,
-              driveFolderId: res.folderId || null
-            });
-            await db.put('days', fresh);
-            if (state.loadedDay?.id === day.id) state.loadedDay = fresh;
+          const idx = day.waypoints.findIndex(x => x.id === wp.id);
+          if (idx >= 0) {
+            day.waypoints[idx].driveSynced = true;
+            if (res.snapshotFileId) day.waypoints[idx].driveSnapshotId = res.snapshotFileId;
+            if (res.snapshotLink)   day.waypoints[idx].driveSnapshotLink = res.snapshotLink;
+            await db.put('days', day);
+            if (state.loadedDay?.id === day.id) state.loadedDay = day;
           }
         }
         ok++;
