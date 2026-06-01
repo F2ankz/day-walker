@@ -2147,19 +2147,44 @@ $('#set-drive-syncall').addEventListener('click', async () => {
   try {
     const days = await db.getAll('days');
     const tasks = [];
-    for (const d of days) for (const wp of d.waypoints) tasks.push({ day: d, wp });
-    if (!tasks.length) { toast('No saved places to sync'); return; }
-    st.textContent = `Syncing 0/${tasks.length}…`;
+    let skipped = 0;
+    for (const d of days) for (const wp of d.waypoints) {
+      // Skip anything already uploaded (has a Drive metadata file id)
+      if (wp.driveMetadataId) { skipped++; continue; }
+      tasks.push({ day: d, wp });
+    }
+    if (!tasks.length) {
+      st.textContent = `Nothing new — ${skipped} already on Drive`;
+      toast(`All ${skipped} places already synced`, 3500);
+      return;
+    }
+    st.textContent = `Syncing 0/${tasks.length}… (${skipped} skipped)`;
     let ok = 0, fail = 0;
     for (let i = 0; i < tasks.length; i++) {
+      const { day, wp } = tasks[i];
       try {
-        await pushToDrive(tasks[i].day, tasks[i].wp, { force: true });
+        const res = await pushToDrive(day, wp, { force: true });
+        // Persist the returned Drive ids so re-runs skip this waypoint
+        if (res) {
+          const fresh = await db.get('days', day.id);
+          const idx = fresh?.waypoints.findIndex(x => x.id === wp.id);
+          if (fresh && idx >= 0) {
+            Object.assign(fresh.waypoints[idx], {
+              driveSnapshotId: res.snapshotFileId || null,
+              drivePhotoId: res.photoFileId || null,
+              driveMetadataId: res.metadataFileId || null,
+              driveFolderId: res.folderId || null
+            });
+            await db.put('days', fresh);
+            if (state.loadedDay?.id === day.id) state.loadedDay = fresh;
+          }
+        }
         ok++;
       } catch (e) { fail++; console.warn('sync fail', e); }
-      st.textContent = `Syncing ${i+1}/${tasks.length}… (${ok} ok, ${fail} fail)`;
+      st.textContent = `Syncing ${i+1}/${tasks.length}… (${ok} ok, ${fail} fail, ${skipped} skipped)`;
     }
-    st.textContent = `✓ Synced ${ok}/${tasks.length}` + (fail ? ` · ${fail} failed` : '');
-    toast(`☁️ Synced ${ok}/${tasks.length} places to Drive`, 4000);
+    st.textContent = `✓ Synced ${ok} new` + (skipped ? ` · ${skipped} skipped` : '') + (fail ? ` · ${fail} failed` : '');
+    toast(`☁️ ${ok} new uploaded` + (skipped ? `, ${skipped} already there` : ''), 4000);
   } catch (e) {
     st.textContent = '❌ ' + (e.message || e);
     toast('Sync failed: ' + (e.message || e), 5000);
