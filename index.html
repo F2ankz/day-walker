@@ -38,6 +38,9 @@
     --r-lg: 22px;
     --shadow-lg: 0 18px 48px rgba(0,0,0,0.45);
   }
+  /* Hide Google Maps auth-error dialog ("This page can't load Google Maps correctly") */
+  .gm-err-container, .gm-err-content, .gm-err-dialog, .dismissButton { display: none !important; }
+
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
     margin: 0; padding: 0; height: 100%;
@@ -937,14 +940,32 @@ function loadGoogleMaps() {
   });
 }
 
-// Belt-and-suspenders: also strip the popup if Google inserts it after first paint.
-const _gmErrorObserver = new MutationObserver(() => {
+// Belt-and-suspenders: strip the auth-error dialog whatever shape Google uses.
+function killGmErrorDialogs() {
+  // Known class-based containers
   document.querySelectorAll('.gm-err-container, .gm-err-content, .gm-err-autocomplete').forEach(el => {
     const modal = el.closest('div[style*="z-index"]') || el;
     modal.remove();
   });
-});
-_gmErrorObserver.observe(document.documentElement, { childList: true, subtree: true });
+  // Text-based fallback: any element whose text is the auth-error message.
+  // Walk shallow top-level overlays only (direct children of body) to stay cheap.
+  const needles = ["can't load Google Maps", 'Do you own this website'];
+  for (const node of document.body ? document.body.children : []) {
+    const txt = node.textContent || '';
+    if (needles.some(n => txt.includes(n)) && txt.length < 400) {
+      node.remove();
+    }
+  }
+}
+const _gmErrorObserver = new MutationObserver(killGmErrorDialogs);
+if (document.body) {
+  _gmErrorObserver.observe(document.body, { childList: true, subtree: true });
+} else {
+  window.addEventListener('DOMContentLoaded', () => {
+    _gmErrorObserver.observe(document.body, { childList: true, subtree: true });
+    killGmErrorDialogs();
+  });
+}
 
 // ---------- Map init ----------
 async function initMap() {
