@@ -1,8 +1,22 @@
 // Day Walker — service worker
 // Caches app shell + map tiles/style/fonts as they load
 
-const SHELL_CACHE = 'dw-shell-v31';
-const RUNTIME_CACHE = 'dw-runtime-v31';
+const SHELL_CACHE = 'dw-shell-v32';
+const RUNTIME_CACHE = 'dw-runtime-v32';
+
+// Hosts whose responses must NEVER be cached — auth-bearing / dynamic.
+// Caching the Maps JS bootstrap or its auth sub-requests serves a stale
+// auth result, which surfaces as a false "Google Maps auth failed" error.
+const NEVER_CACHE_HOSTS = [
+  'maps.googleapis.com',
+  'maps.gstatic.com',
+  'routes.googleapis.com',
+  'www.googleapis.com',
+  'accounts.google.com',
+  'apis.google.com',
+  'khms0.googleapis.com',
+  'khms1.googleapis.com'
+];
 
 const SHELL = [
   './',
@@ -36,6 +50,12 @@ self.addEventListener('fetch', e => {
 
   // Only cache http(s); skip chrome-extension://, blob:, data: etc.
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
+  // Never intercept Google API / auth hosts — always hit the network so auth
+  // tokens stay fresh. (Also covers any *.googleapis.com host.)
+  if (NEVER_CACHE_HOSTS.includes(url.hostname) || url.hostname.endsWith('.googleapis.com')) {
+    return;  // let the browser handle it directly, no caching
+  }
 
   // Network-first for HTML to pick up updates
   if (req.mode === 'navigate' || req.destination === 'document') {
