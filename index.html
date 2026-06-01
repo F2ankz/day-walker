@@ -1279,6 +1279,7 @@ function stopReplay() {
   if (state.replay.markMode) setMarkMode(false);
   $('#replay-overlay').classList.remove('active');
   if (state.walkerMarker) { state.walkerMarker.setMap(null); state.walkerMarker = null; }
+  if (state.walkerCircle) { state.walkerCircle.setMap(null); state.walkerCircle = null; }
   // Tear down trail-behind, restore static full-route preview
   if (state.routeBehind) { state.routeBehind.setMap(null); state.routeBehind = null; }
   if (state.loadedDay) drawRoute(state.loadedDay);
@@ -1301,22 +1302,44 @@ function carSymbolIcon(rotation) {
     path: CAR_SYMBOL_PATH,
     fillColor: '#2f7ef0',
     fillOpacity: 1,
-    strokeColor: '#ffffff',
-    strokeWeight: 2,
-    scale: 1.3,
+    strokeColor: '#2f7ef0',
+    strokeWeight: 1,
+    scale: 0.8,            // fits inside the circle
     rotation,
+    anchor: new google.maps.Point(0, 0)
+  };
+}
+
+function circleBgIcon() {
+  return {
+    path: google.maps.SymbolPath.CIRCLE,
+    fillColor: '#ffffff',
+    fillOpacity: 1,
+    strokeColor: '#2f7ef0',
+    strokeWeight: 2.5,
+    scale: 15,
     anchor: new google.maps.Point(0, 0)
   };
 }
 
 function ensureWalkerMarker() {
   if (state.walkerMarker) return state.walkerMarker;
+  // Background circle (does not rotate) — sits under the arrow
+  state.walkerCircle = new google.maps.Marker({
+    position: state.replay.pathPoints[0],
+    map: state.map,
+    icon: circleBgIcon(),
+    zIndex: 9998,
+    optimized: false,
+    clickable: false
+  });
+  // Navigation arrow (rotates with bearing) — on top
   state.walkerMarker = new google.maps.Marker({
     position: state.replay.pathPoints[0],
     map: state.map,
     icon: carSymbolIcon(0),
     zIndex: 9999,
-    optimized: false   // ensures Symbol updates each setIcon call
+    optimized: false
   });
   return state.walkerMarker;
 }
@@ -1373,10 +1396,12 @@ function rafLoop(day) {
     }
     const targetD = r.progress * r.totalDistM;
     const pt = pointAtDistance(targetD);
-    // Update car position + rotation (bearing)
+    // Update marker position + arrow rotation (bearing); circle stays upright
     if (state.walkerMarker) {
-      state.walkerMarker.setPosition({ lat: pt.lat, lng: pt.lng });
+      const pos = { lat: pt.lat, lng: pt.lng };
+      state.walkerMarker.setPosition(pos);
       state.walkerMarker.setIcon(carSymbolIcon(pt.bearing));
+      if (state.walkerCircle) state.walkerCircle.setPosition(pos);
     }
     // Grow trail behind the car — all path vertices up to current segment, plus the interpolated head
     if (state.routeBehind) {
