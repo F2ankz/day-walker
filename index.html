@@ -341,6 +341,29 @@
   }
   .photo-preview img { width: 100%; height: 100%; object-fit: cover; }
 
+  /* Mark-a-branch layout: single column on mobile, two columns on desktop */
+  .wp-grid { display: block; }
+  .wp-col-left, .wp-col-right { min-width: 0; }
+  @media (min-width: 820px) {
+    #sheet-waypoint {
+      left: 50%; right: auto;
+      transform: translate(-50%, 100%);
+      bottom: 0;
+      width: min(980px, 94vw);
+      border-radius: 24px 24px 0 0;
+    }
+    #sheet-waypoint.active { transform: translate(-50%, 0); }
+    #sheet-waypoint .wp-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 22px;
+      align-items: start;
+    }
+    /* Push Save/Cancel to the bottom of the right column */
+    #sheet-waypoint .wp-col-right { display: flex; flex-direction: column; }
+    #sheet-waypoint .wp-col-right #wp-save { margin-top: auto; }
+  }
+
   /* Login overlay */
   .login-overlay {
     position: fixed; inset: 0; background: var(--bg);
@@ -554,32 +577,37 @@
 <!-- Mark waypoint sheet -->
 <div class="sheet" id="sheet-waypoint">
   <div class="sheet-handle"></div>
-  <h2>Mark a branch</h2>
-  <div class="field-coord">
-    <span><b id="wp-seq-label" style="color:var(--teal-2);">#—</b></span>
-    <span id="wp-coord-text">—</span>
+  <h2>Mark a branch
+    <span id="wp-seq-label" style="color:var(--teal-2); font-size:18px;">#—</span>
+    <span id="wp-coord-text" style="color:var(--text-mute); font-size:13px; font-weight:400;">—</span>
+  </h2>
+  <div class="wp-grid">
+    <div class="wp-col-left">
+      <div class="photo-preview" id="wp-snapshot-preview" style="aspect-ratio:16/10; margin-bottom:8px;">
+        <div>📸 Capturing area…</div>
+      </div>
+      <div class="photo-preview" id="wp-photo-preview">
+        <div>📷 Tap to add photo</div>
+      </div>
+      <input type="file" id="wp-photo-input" accept="image/*" capture="environment" style="display:none;" />
+    </div>
+    <div class="wp-col-right">
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="wp-name" placeholder="e.g. สาขาสุขุมวิท / ร้านกาแฟ" />
+      </div>
+      <div class="field">
+        <label>Address <span id="wp-addr-status" style="color:var(--text-mute); font-size:11px;"></span></label>
+        <textarea id="wp-address" placeholder="กำลังค้นหาที่อยู่อัตโนมัติ…"></textarea>
+      </div>
+      <div class="field">
+        <label>Note (optional)</label>
+        <textarea id="wp-note" placeholder="หมายเหตุ เช่น มุมถนน ใกล้ป้ายรถเมล์"></textarea>
+      </div>
+      <button class="btn-block primary" id="wp-save">Save branch</button>
+      <button class="btn-block" id="wp-cancel">Cancel</button>
+    </div>
   </div>
-  <div class="photo-preview" id="wp-snapshot-preview" style="aspect-ratio:16/10; margin-bottom:8px;">
-    <div>📸 Capturing area…</div>
-  </div>
-  <div class="photo-preview" id="wp-photo-preview">
-    <div>📷 Tap to add photo</div>
-  </div>
-  <input type="file" id="wp-photo-input" accept="image/*" capture="environment" style="display:none;" />
-  <div class="field">
-    <label>Name</label>
-    <input type="text" id="wp-name" placeholder="e.g. สาขาสุขุมวิท / ร้านกาแฟ" />
-  </div>
-  <div class="field">
-    <label>Address <span id="wp-addr-status" style="color:var(--text-mute); font-size:11px;"></span></label>
-    <textarea id="wp-address" placeholder="กำลังค้นหาที่อยู่อัตโนมัติ…"></textarea>
-  </div>
-  <div class="field">
-    <label>Note (optional)</label>
-    <textarea id="wp-note" placeholder="หมายเหตุ เช่น มุมถนน ใกล้ป้ายรถเมล์"></textarea>
-  </div>
-  <button class="btn-block primary" id="wp-save">Save branch</button>
-  <button class="btn-block" id="wp-cancel">Cancel</button>
   <div style="height: 24px;"></div>
 </div>
 
