@@ -1,8 +1,8 @@
 // Day Walker — service worker
 // Caches app shell + map tiles/style/fonts as they load
 
-const SHELL_CACHE = 'dw-shell-v37';
-const RUNTIME_CACHE = 'dw-runtime-v37';
+const SHELL_CACHE = 'dw-shell-v38';
+const RUNTIME_CACHE = 'dw-runtime-v38';
 
 // Hosts whose responses must NEVER be cached — auth-bearing / dynamic.
 // Caching the Maps JS bootstrap or its auth sub-requests serves a stale
