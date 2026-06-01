@@ -633,6 +633,20 @@
       <option value="500">500×</option>
     </select>
   </div>
+  <h3>Snapshot</h3>
+  <div class="field">
+    <label>Zoom level when marking (lower = wider area)</label>
+    <select id="set-snapzoom">
+      <option value="11">11 · district</option>
+      <option value="12">12 · town</option>
+      <option value="13">13 · area</option>
+      <option value="14" selected>14 · neighbourhood</option>
+      <option value="15">15 · blocks</option>
+      <option value="16">16 · street</option>
+      <option value="17">17 · close</option>
+      <option value="18">18 · building</option>
+    </select>
+  </div>
   <h3>Google Drive sync</h3>
   <div class="field" style="background:var(--bg-3); border:1px solid var(--line); border-radius:12px; padding:12px 14px;">
     <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; color:var(--text);">
@@ -765,6 +779,7 @@ const state = {
   settings: {
     googleMapsKey: '',
     defaultSpeed: 50,
+    snapshotZoom: 14,
     sheetWebhookUrl: '',
     driveSync: false,
     allowedEmails: ''   // comma-separated; merged with DEFAULT_ALLOWED_EMAILS
@@ -1565,8 +1580,9 @@ let _snapshotToken = null;
 async function captureLocationSnapshot(lat, lng) {
   const key = state.settings.googleMapsKey || DEFAULT_GMAPS_KEY;
   if (!key) return { error: 'No API key. Set one in Settings.' };
+  const zoom = state.settings.snapshotZoom || 14;
   const url = `https://maps.googleapis.com/maps/api/staticmap`
-    + `?center=${lat},${lng}&zoom=14&size=480x360&maptype=hybrid`
+    + `?center=${lat},${lng}&zoom=${zoom}&size=480x360&maptype=hybrid`
     + `&markers=color:0xe09972%7C${lat},${lng}&scale=2&key=${encodeURIComponent(key)}`;
   try {
     const res = await fetch(url);
@@ -2252,6 +2268,7 @@ $('#btn-places').addEventListener('click', showAllPlaces);
 $('#btn-settings').addEventListener('click', () => {
   $('#set-gmaps-key').value = state.settings.googleMapsKey || '';
   $('#set-speed').value = String(state.settings.defaultSpeed);
+  $('#set-snapzoom').value = String(state.settings.snapshotZoom || 14);
   $('#set-drive-enabled').checked = !!state.settings.driveSync;
   refreshDriveStatusUI();
   $('#set-allowed-emails').value = state.settings.allowedEmails || '';
@@ -2274,6 +2291,7 @@ $('#btn-settings').addEventListener('click', () => {
 $('#set-save').addEventListener('click', async () => {
   await saveSetting('googleMapsKey', $('#set-gmaps-key').value.trim());
   await saveSetting('defaultSpeed', Number($('#set-speed').value) || 50);
+  await saveSetting('snapshotZoom', Number($('#set-snapzoom').value) || 14);
   await saveSetting('driveSync', $('#set-drive-enabled').checked);
   await saveSetting('allowedEmails', $('#set-allowed-emails').value.trim());
   closeSheet();
