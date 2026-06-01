@@ -472,7 +472,6 @@
     <div class="view-modes" id="view-modes">
       <button data-mode="follow" class="active" title="Lock-follow"><span>🎯</span><span>Follow</span></button>
       <button data-mode="drone" title="Behind-and-above"><span>🚁</span><span>Drone</span></button>
-      <button data-mode="top" title="Top-down"><span>🗺️</span><span>Top</span></button>
       <button data-mode="free" title="Free camera"><span>🎥</span><span>Free</span></button>
     </div>
 
@@ -1423,11 +1422,6 @@ function applyCamera(pt) {
     state.map.setTilt(0);
     state.map.setHeading(pt.bearing);
     if (Math.abs(state.map.getZoom() - 18) > 0.5) state.map.setZoom(18);
-  } else if (r.viewMode === 'top') {
-    state.map.setCenter(center);
-    state.map.setTilt(0);
-    state.map.setHeading(0);
-    if (Math.abs(state.map.getZoom() - 16) > 0.5) state.map.setZoom(16);
   }
 }
 
