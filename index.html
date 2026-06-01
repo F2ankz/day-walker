@@ -1479,36 +1479,51 @@ let _addrToken = null;
 let _snapshotToken = null;
 
 // Capture a static map image of the given coordinates via Google Static Maps API.
-// Returned as a base64 data URL ready to store in IndexedDB.
+// Returns { dataUrl } on success, or { error } describing what to fix.
 async function captureLocationSnapshot(lat, lng) {
-  const key = state.settings.googleApiKey;
-  if (!key) return null;
+  const key = state.settings.googleMapsKey || DEFAULT_GMAPS_KEY;
+  if (!key) return { error: 'No API key. Set one in Settings.' };
   const url = `https://maps.googleapis.com/maps/api/staticmap`
     + `?center=${lat},${lng}&zoom=18&size=480x300&maptype=hybrid`
     + `&markers=color:0xe09972%7C${lat},${lng}&scale=2&key=${encodeURIComponent(key)}`;
   try {
     const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      // Google returns a human-readable error string in the body for 403s
+      const body = await res.text().catch(() => '');
+      const reason = body.includes('not activated')
+          ? 'Enable Maps Static API in Google Cloud Console.'
+          : body.includes('billing')
+          ? 'Enable billing for your Google Cloud project.'
+          : body.includes('referer') || body.includes('referrer')
+          ? 'Add this site to API key referrer allowlist.'
+          : (body.slice(0, 120) || `HTTP ${res.status}`);
+      console.warn('static map snapshot failed:', res.status, body);
+      return { error: reason };
+    }
     const blob = await res.blob();
-    return await new Promise(resolve => {
+    const dataUrl = await new Promise(resolve => {
       const fr = new FileReader();
       fr.onload = () => resolve(fr.result);
       fr.onerror = () => resolve(null);
       fr.readAsDataURL(blob);
     });
+    return dataUrl ? { dataUrl } : { error: 'Could not decode image' };
   } catch (e) {
-    console.warn('static map snapshot failed:', e);
-    return null;
+    console.warn('static map snapshot error:', e);
+    return { error: (e?.message || 'Network error') };
   }
 }
 
-function updateSnapshotPreview() {
+function updateSnapshotPreview(errorMsg) {
   const el = $('#wp-snapshot-preview');
   if (!el) return;
   if (pendingSnapshotBase64) {
     el.innerHTML = `<img src="${pendingSnapshotBase64}" alt="Area snapshot" style="width:100%;height:100%;object-fit:cover;" />`;
+  } else if (errorMsg) {
+    el.innerHTML = `<div style="font-size:11px; padding:8px; line-height:1.4;">📸 ${escapeHtml(errorMsg)}</div>`;
   } else {
-    el.innerHTML = '<div>📸 Snapshot unavailable</div>';
+    el.innerHTML = '<div>📸 No snapshot</div>';
   }
 }
 
@@ -1546,10 +1561,10 @@ function openBranchSheet() {
   // Fetch area snapshot in parallel; update the preview when it arrives
   const sTok = Symbol('snap');
   _snapshotToken = sTok;
-  captureLocationSnapshot(coord.lat, coord.lng).then(s => {
+  captureLocationSnapshot(coord.lat, coord.lng).then(result => {
     if (_snapshotToken !== sTok) return;
-    pendingSnapshotBase64 = s;
-    updateSnapshotPreview();
+    pendingSnapshotBase64 = result?.dataUrl || null;
+    updateSnapshotPreview(result?.error);
   });
 
   openSheet('sheet-waypoint');
