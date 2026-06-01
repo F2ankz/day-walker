@@ -1493,10 +1493,12 @@ async function captureLocationSnapshot(lat, lng) {
       const body = await res.text().catch(() => '');
       const reason = body.includes('not activated')
           ? 'Enable Maps Static API in Google Cloud Console.'
+          : body.includes('not authorized')
+          ? 'API key blocks Static Maps. Paste your own key in ⚙️ Settings → Google Maps API key, then reload.'
           : body.includes('billing')
           ? 'Enable billing for your Google Cloud project.'
           : body.includes('referer') || body.includes('referrer')
-          ? 'Add this site to API key referrer allowlist.'
+          ? 'Add this site to the API key referrer allowlist.'
           : (body.slice(0, 120) || `HTTP ${res.status}`);
       console.warn('static map snapshot failed:', res.status, body);
       return { error: reason };
