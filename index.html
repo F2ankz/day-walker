@@ -611,7 +611,8 @@
     <div id="set-drive-status" style="font-size:11px; color:var(--text-mute); margin-top:8px; line-height:1.5;">
       Not connected.
     </div>
-    <button class="btn-block" id="set-drive-connect" style="margin-top:8px;">🔑 Connect Google Drive</button>
+    <button class="btn-block" id="set-drive-connect" style="margin-top:8px;">🔑 Connect &amp; test Drive</button>
+    <button class="btn-block" id="set-drive-syncall" style="margin-top:4px;">☁️ Sync all saved places to Drive</button>
   </div>
   <div style="font-size:11px; color:var(--text-mute); line-height:1.5; margin: -8px 0 14px;">
     Files land in <b>Day Walker</b> root folder → one subfolder per route. Each waypoint becomes <code>NNN-name.snapshot.jpg</code> + <code>NNN-name.photo.jpg</code> + <code>NNN-name.json</code>. App only sees files it created (scope <code>drive.file</code>).
@@ -1681,17 +1682,43 @@ async function getDriveToken({ interactive = false } = {}) {
     return state.drive.accessToken;
   }
   const client = initDriveTokenClient();
-  if (!client) throw new Error('GIS not loaded yet');
+  if (!client) throw new Error('Google sign-in library not loaded yet — reload the page');
   return new Promise((resolve, reject) => {
+    let settled = false;
+    // Safety timeout — a silent token request can hang forever if consent was
+    // never granted. Reject after 8s so the caller can retry interactively.
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; reject(new Error('TOKEN_TIMEOUT')); }
+    }, 8000);
     client.callback = (resp) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
       if (resp.error) { reject(new Error(resp.error)); return; }
       state.drive.accessToken = resp.access_token;
       state.drive.tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
       try { localStorage.setItem('dw_drive_token', JSON.stringify({ t: resp.access_token, e: state.drive.tokenExpiry })); } catch (e) {}
       resolve(resp.access_token);
     };
+    client.error_callback = (err) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      reject(new Error(err?.type || 'token_error'));
+    };
     client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
   });
+}
+
+// Get a token, escalating to an interactive consent prompt if the silent
+// attempt times out or fails. Safe to call from a user-gesture handler.
+async function ensureDriveToken() {
+  try {
+    return await getDriveToken({ interactive: false });
+  } catch (e) {
+    if (e.message === 'TOKEN_TIMEOUT' || e.message === 'token_error' || /interaction|consent|popup/i.test(e.message)) {
+      return await getDriveToken({ interactive: true });
+    }
+    throw e;
+  }
 }
 
 function loadCachedDriveToken() {
@@ -1707,7 +1734,7 @@ function loadCachedDriveToken() {
 }
 
 async function driveApi(path, options = {}) {
-  const token = await getDriveToken();
+  const token = await ensureDriveToken();
   const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
     ...options,
     headers: { 'Authorization': `Bearer ${token}`, ...(options.headers || {}) }
@@ -1747,7 +1774,7 @@ async function driveFindOrCreateFolder(name, parentId) {
 }
 
 async function driveUpload(name, parentId, mimeType, contentBlobOrString) {
-  const token = await getDriveToken();
+  const token = await ensureDriveToken();
   const boundary = 'dw_' + Math.random().toString(36).slice(2);
   const metadata = { name, parents: [parentId] };
   const body = new Blob([
@@ -1805,8 +1832,8 @@ async function getRouteFolderId(day) {
   return id;
 }
 
-async function pushToDrive(day, wp) {
-  if (!state.settings.driveSync) return null;
+async function pushToDrive(day, wp, { force = false } = {}) {
+  if (!state.settings.driveSync && !force) return null;
   const folderId = await getRouteFolderId(day);
   const baseName = `${String(wp.seq).padStart(3, '0')}-${safeFileName(wp.name)}`;
   const uploads = {};
@@ -2095,14 +2122,42 @@ $('#set-save').addEventListener('click', async () => {
   toast('Settings saved');
 });
 $('#set-drive-connect').addEventListener('click', async () => {
+  const st = $('#set-drive-status');
   try {
-    $('#set-drive-status').textContent = 'Requesting consent…';
+    st.textContent = 'Requesting consent…';
     await getDriveToken({ interactive: true });
+    st.textContent = 'Creating / checking root folder…';
+    // Actually exercise the Drive API so we surface any error immediately
+    state.drive.rootFolderId = await driveFindOrCreateFolder(DRIVE_ROOT_NAME, null);
     refreshDriveStatusUI();
-    toast('☁️ Drive connected');
+    toast('☁️ Drive connected — "Day Walker" folder ready', 3500);
   } catch (e) {
-    $('#set-drive-status').textContent = 'Connect failed: ' + (e.message || e);
-    toast('Drive connect failed', 3500);
+    st.textContent = '❌ ' + (e.message || e);
+    toast('Drive connect failed: ' + (e.message || e), 5000);
+  }
+});
+
+$('#set-drive-syncall').addEventListener('click', async () => {
+  const st = $('#set-drive-status');
+  try {
+    const days = await db.getAll('days');
+    const tasks = [];
+    for (const d of days) for (const wp of d.waypoints) tasks.push({ day: d, wp });
+    if (!tasks.length) { toast('No saved places to sync'); return; }
+    st.textContent = `Syncing 0/${tasks.length}…`;
+    let ok = 0, fail = 0;
+    for (let i = 0; i < tasks.length; i++) {
+      try {
+        await pushToDrive(tasks[i].day, tasks[i].wp, { force: true });
+        ok++;
+      } catch (e) { fail++; console.warn('sync fail', e); }
+      st.textContent = `Syncing ${i+1}/${tasks.length}… (${ok} ok, ${fail} fail)`;
+    }
+    st.textContent = `✓ Synced ${ok}/${tasks.length}` + (fail ? ` · ${fail} failed` : '');
+    toast(`☁️ Synced ${ok}/${tasks.length} places to Drive`, 4000);
+  } catch (e) {
+    st.textContent = '❌ ' + (e.message || e);
+    toast('Sync failed: ' + (e.message || e), 5000);
   }
 });
 
