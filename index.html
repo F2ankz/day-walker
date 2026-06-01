@@ -1667,46 +1667,49 @@ const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_ROOT_NAME = 'Day Walker';
 
 function initDriveTokenClient() {
-  if (state.drive.tokenClient) return state.drive.tokenClient;
+  // Kept for boot-time warmup only; real requests build a fresh client so the
+  // callback + error_callback are bound in config (GIS ignores post-init
+  // reassignment of error_callback, which caused silent hangs → TOKEN_TIMEOUT).
   if (!window.google?.accounts?.oauth2) return null;
-  state.drive.tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: DRIVE_SCOPE,
-    callback: () => {}   // replaced per-request
-  });
-  return state.drive.tokenClient;
+  return true;
 }
 
 async function getDriveToken({ interactive = false } = {}) {
   if (state.drive.accessToken && Date.now() < state.drive.tokenExpiry) {
     return state.drive.accessToken;
   }
-  const client = initDriveTokenClient();
-  if (!client) throw new Error('Google sign-in library not loaded yet — reload the page');
+  if (!window.google?.accounts?.oauth2) {
+    throw new Error('Google library not loaded yet — reload the page');
+  }
   return new Promise((resolve, reject) => {
     let settled = false;
-    // Silent requests can hang if consent was never granted — short timeout so
-    // the caller falls back to interactive. Interactive needs a LONG window
-    // because the user must pick an account + click Allow on Google's popup.
-    const timeoutMs = interactive ? 120000 : 8000;
+    const timeoutMs = interactive ? 180000 : 8000;
     const timer = setTimeout(() => {
       if (!settled) { settled = true; reject(new Error('TOKEN_TIMEOUT')); }
     }, timeoutMs);
-    client.callback = (resp) => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      if (resp.error) { reject(new Error(resp.error)); return; }
-      state.drive.accessToken = resp.access_token;
-      state.drive.tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
-      try { localStorage.setItem('dw_drive_token', JSON.stringify({ t: resp.access_token, e: state.drive.tokenExpiry })); } catch (e) {}
-      resolve(resp.access_token);
-    };
-    client.error_callback = (err) => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      reject(new Error(err?.type || 'token_error'));
-    };
-    client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+    const finish = (fn, val) => { if (settled) return; settled = true; clearTimeout(timer); fn(val); };
+
+    // Build a fresh client each call with callbacks bound in the config object.
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      prompt: interactive ? 'consent' : '',
+      callback: (resp) => {
+        if (resp.error) { finish(reject, new Error(resp.error)); return; }
+        state.drive.accessToken = resp.access_token;
+        state.drive.tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
+        try { localStorage.setItem('dw_drive_token', JSON.stringify({ t: resp.access_token, e: state.drive.tokenExpiry })); } catch (e) {}
+        finish(resolve, resp.access_token);
+      },
+      error_callback: (err) => {
+        finish(reject, new Error(err?.type || 'token_error'));
+      }
+    });
+    try {
+      client.requestAccessToken();
+    } catch (e) {
+      finish(reject, e);
+    }
   });
 }
 
